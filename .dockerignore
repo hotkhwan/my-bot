@@ -1,0 +1,10 @@
+.git
+.github
+.claude
+*.md
+.env
+.env.*
+*_test.go
+fly.toml
+Dockerfile
+.dockerignore

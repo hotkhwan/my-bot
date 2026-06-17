@@ -1,0 +1,25 @@
+# Fly.io config for the Telegram Binance Futures bot (polling worker).
+# App name must match the app created in the Fly dashboard / `fly launch`.
+app = "aliza-trading"
+primary_region = "sin" # Singapore: close to Binance + Thailand
+
+[build]
+
+# Non-secret config. Safety flags pinned here so a misconfigured deploy
+# cannot silently enable real trading. Secrets go in `fly secrets set` (below),
+# never in this file.
+[env]
+  APP_ENV = "production"
+  TELEGRAM_MODE = "polling"
+  DRY_RUN = "true"
+  BINANCE_TESTNET = "true"
+  REAL_TRADING_ENABLED = "false"
+  LOG_LEVEL = "info"
+  MONGODB_DATABASE = "tradebot"
+
+# Polling mode needs no inbound port, so there is no [http_service].
+# A single always-on machine: Telegram getUpdates allows only one poller,
+# so do NOT scale this past 1 instance.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
