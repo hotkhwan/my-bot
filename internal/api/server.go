@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bottrade/internal/config"
+	"bottrade/internal/dashboard"
 	"bottrade/internal/signals"
 
 	"github.com/gofiber/fiber/v3"
@@ -74,6 +75,13 @@ func (s *Server) routes() {
 		})
 	})
 	s.app.Post("/tradingview/webhook", s.handleTradingViewWebhook)
+
+	// Mount the embedded dashboard last: its "/*" catch-all must not shadow the
+	// API routes above. A mount failure must not take down the API, so log and
+	// continue with health checks and the webhook still served.
+	if err := dashboard.Register(s.app); err != nil {
+		s.logger.Error("dashboard mount failed", "error", err)
+	}
 }
 
 func (s *Server) handleTradingViewWebhook(c fiber.Ctx) error {

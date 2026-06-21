@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trading Bot · Dashboard</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      main { max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; }
+      h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+      p { color: #666; margin-top: 0; }
+      .status { margin-top: 2rem; border: 1px solid #8883; border-radius: 0.75rem; padding: 1rem 1.25rem; }
+      .row { display: flex; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid #8881; }
+      .row:last-child { border-bottom: 0; }
+      code { font-size: 0.85rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Trading Bot Dashboard</h1>
+      <p>Embedded frontend placeholder — replace <code>internal/dashboard/dist</code> with the real build.</p>
+      <section class="status" id="status">Loading status…</section>
+    </main>
+    <script>
+      fetch("/readyz")
+        .then((r) => r.json())
+        .then((d) => {
+          const el = document.getElementById("status");
+          el.innerHTML = Object.entries(d)
+            .map(([k, v]) => `<div class="row"><span>${k}</span><strong>${v}</strong></div>`)
+            .join("");
+        })
+        .catch(() => {
+          document.getElementById("status").textContent = "Status unavailable.";
+        });
+    </script>
+  </body>
+</html>

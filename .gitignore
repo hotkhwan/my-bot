@@ -5,7 +5,10 @@
 
 # Go build/test artifacts
 bin/
-dist/
+# Only the repo-root frontend scratch build is ignored. The embedded dashboard
+# build under internal/dashboard/dist IS committed: go:embed needs it present at
+# `go build` time (Docker/CI build from a clean checkout).
+/dist/
 coverage.out
 *.test
 *.exe
