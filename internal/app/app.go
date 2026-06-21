@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"time"
@@ -50,6 +51,16 @@ func Bootstrap() (*App, *slog.Logger, error) {
 	}
 
 	return New(cfg, logger), logger, nil
+}
+
+// IsShutdown reports whether err is the result of ctx being cancelled (e.g. a
+// SIGTERM caught by signal.NotifyContext), so entrypoints can exit cleanly
+// instead of logging it as a fatal error. It uses errors.Is so a cancellation
+// wrapped anywhere up the stack is still recognised as graceful. When ctx is
+// not cancelled it short-circuits to false, so genuine runtime errors are never
+// suppressed.
+func IsShutdown(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }
 
 func (a *App) logBootstrap(role string) {

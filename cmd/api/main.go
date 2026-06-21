@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -28,14 +27,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := application.RunAPI(ctx); err != nil && !isShutdown(ctx, err) {
+	if err := application.RunAPI(ctx); err != nil && !app.IsShutdown(ctx, err) {
 		logger.Error("api stopped", "error", err)
 		os.Exit(1)
 	}
-}
-
-func isShutdown(ctx context.Context, err error) bool {
-	// errors.Is, not ==, so a shutdown error wrapped anywhere up the stack is
-	// still recognised as graceful rather than logged as a fatal crash.
-	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }
