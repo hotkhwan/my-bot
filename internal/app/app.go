@@ -10,9 +10,11 @@ import (
 	"bottrade/internal/ai"
 	"bottrade/internal/api"
 	"bottrade/internal/config"
+	"bottrade/internal/decimal"
 	binanceexec "bottrade/internal/exchange/binance"
 	"bottrade/internal/journal"
 	"bottrade/internal/logging"
+	"bottrade/internal/monitor"
 	"bottrade/internal/orders"
 	"bottrade/internal/plans"
 	"bottrade/internal/signals"
@@ -89,13 +91,14 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.logBootstrap("all")
 
-	orderService, statusService, planService, signalStore, cleanup, err := a.newTradingServices(ctx)
+	orderService, statusService, planService, signalStore, trailExchange, cleanup, err := a.newTradingServices(ctx)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
 	signalProcessor := a.newSignalProcessor(orderService, signalStore)
+	a.startMonitor(ctx, trailExchange)
 
 	errCh := make(chan error, 2)
 	if a.cfg.HTTP.Enabled {
@@ -154,11 +157,13 @@ func (a *App) RunWorker(ctx context.Context) error {
 
 	a.logBootstrap("worker")
 
-	orderService, statusService, planService, _, cleanup, err := a.newTradingServices(ctx)
+	orderService, statusService, planService, _, trailExchange, cleanup, err := a.newTradingServices(ctx)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	a.startMonitor(ctx, trailExchange)
 
 	if a.cfg.Telegram.Mode != config.TelegramModePolling {
 		a.logger.Info("telegram mode is not polling; worker idle until shutdown", "telegram_mode", a.cfg.Telegram.Mode)
@@ -174,6 +179,37 @@ func (a *App) RunWorker(ctx context.Context) error {
 	return runner.Run(ctx)
 }
 
+// startMonitor launches the trailing-stop monitor in the background when a live
+// exchange is available and a trailing policy is configured (TRAIL_ACTIVATE_PCT
+// and TRAIL_GAP_PCT). It is best-effort: the poller is the primary runtime, so a
+// monitor failure is logged, not fatal.
+func (a *App) startMonitor(ctx context.Context, trailExchange monitor.Exchange) {
+	if trailExchange == nil {
+		return
+	}
+	policy, ok := a.trailPolicy()
+	if !ok {
+		a.logger.Info("trailing-stop monitor disabled (set TRAIL_ACTIVATE_PCT and TRAIL_GAP_PCT to enable)")
+		return
+	}
+	runner := monitor.NewRunner(trailExchange, policy, 0, a.logger)
+	go func() {
+		if err := runner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			a.logger.Error("trailing-stop monitor stopped", "error", err)
+		}
+	}()
+}
+
+func (a *App) trailPolicy() (monitor.TrailPolicy, bool) {
+	activate, err1 := decimal.Parse(a.cfg.App.TrailActivatePct)
+	gap, err2 := decimal.Parse(a.cfg.App.TrailGapPct)
+	if err1 != nil || err2 != nil {
+		return monitor.TrailPolicy{}, false
+	}
+	policy := monitor.TrailPolicy{ActivatePct: activate, TrailGapPct: gap}
+	return policy, policy.Valid()
+}
+
 // RunAPI starts the api process: the Fiber HTTP server (health checks, the
 // TradingView webhook, and the future dashboard). It shares the same MongoDB as
 // the worker, so confirmations created here are completed by the worker's
@@ -185,7 +221,7 @@ func (a *App) RunAPI(ctx context.Context) error {
 
 	a.logBootstrap("api")
 
-	orderService, _, _, signalStore, cleanup, err := a.newTradingServices(ctx)
+	orderService, _, _, signalStore, _, cleanup, err := a.newTradingServices(ctx)
 	if err != nil {
 		return err
 	}
@@ -213,7 +249,7 @@ func (a *App) userOptions(signalStore signals.SignalStore) []api.Option {
 	return []api.Option{api.WithUsers(service)}
 }
 
-func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.StatusService, *plans.Service, signals.SignalStore, func(), error) {
+func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.StatusService, *plans.Service, signals.SignalStore, monitor.Exchange, func(), error) {
 	connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -222,7 +258,7 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 		Database: a.cfg.MongoDB.Database,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	cleanup := func() {
 		disconnectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -235,6 +271,7 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 
 	executor := orders.Executor(orders.DryRunExecutor{DryRun: true})
 	positionProvider := orders.PositionProvider(orders.EmptyPositionProvider{})
+	var trailExchange monitor.Exchange
 	if !a.cfg.App.DryRun {
 		binanceExecutor := binanceexec.NewExecutor(binanceexec.ExecutorConfig{
 			APIKey:               a.cfg.Binance.APIKey,
@@ -247,6 +284,7 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 		}, a.logger)
 		executor = binanceExecutor
 		positionProvider = binanceExecutor
+		trailExchange = binanceExecutor
 	}
 
 	var tradeJournal orders.TradeJournal
@@ -261,7 +299,7 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 	}, a.logger)
 	statusService := orders.NewStatusService(positionProvider)
 	planService := plans.NewService(store)
-	return orderService, statusService, planService, store, cleanup, nil
+	return orderService, statusService, planService, store, trailExchange, cleanup, nil
 }
 
 func (a *App) newSignalProcessor(orderService *orders.Service, signalStore signals.SignalStore) *signals.Processor {

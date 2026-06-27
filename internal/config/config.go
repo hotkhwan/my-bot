@@ -51,6 +51,10 @@ type AppConfig struct {
 	DefaultMarginMode  string
 	MaxLeverage        int
 	ConfirmationTTL    time.Duration
+	// Trailing stop policy, as percent-of-entry strings (e.g. "1" = 1%). Both
+	// must be positive to enable the trailing-stop monitor.
+	TrailActivatePct string
+	TrailGapPct      string
 }
 
 type TelegramConfig struct {
@@ -169,6 +173,8 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.App.DefaultMarginMode = strings.ToLower(reader.string("DEFAULT_MARGIN_MODE", cfg.App.DefaultMarginMode))
 	cfg.App.MaxLeverage = reader.int("MAX_LEVERAGE", cfg.App.MaxLeverage)
 	cfg.App.ConfirmationTTL = reader.seconds("CONFIRMATION_TTL_SECONDS", cfg.App.ConfirmationTTL)
+	cfg.App.TrailActivatePct = reader.string("TRAIL_ACTIVATE_PCT", cfg.App.TrailActivatePct)
+	cfg.App.TrailGapPct = reader.string("TRAIL_GAP_PCT", cfg.App.TrailGapPct)
 
 	cfg.Telegram.BotToken = reader.string("TELEGRAM_BOT_TOKEN", cfg.Telegram.BotToken)
 	cfg.Telegram.AdminUserID = reader.userID("TELEGRAM_ADMIN_USER_ID")
