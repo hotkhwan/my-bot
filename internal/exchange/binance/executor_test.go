@@ -128,6 +128,45 @@ func TestExecutorOpenRollsBackWhenStopLossFails(t *testing.T) {
 	}
 }
 
+func TestExecutorMoveStopLoss(t *testing.T) {
+	server := newBinanceTestServer(t)
+	defer server.Close()
+
+	executor := NewExecutor(ExecutorConfig{
+		APIKey:               "key",
+		APISecret:            "secret",
+		BaseURL:              server.URL,
+		Testnet:              true,
+		RequestTimeout:       time.Second,
+		ExchangeInfoCacheTTL: time.Minute,
+	}, testLogger())
+	executor.now = func() time.Time { return time.UnixMilli(1710000000000) }
+
+	if err := executor.MoveStopLoss(context.Background(), "BTCUSDT", domain.PositionSideLong, decimal.MustParse("61234.56"), "tb_x_sl", "tb_x_sl2"); err != nil {
+		t.Fatalf("MoveStopLoss returned error: %v", err)
+	}
+
+	var canceled, placed url.Values
+	for _, rq := range server.Requests() {
+		switch rq.MethodPath {
+		case "DELETE /fapi/v1/algoOrder":
+			canceled = rq.Query
+		case "POST /fapi/v1/algoOrder":
+			placed = rq.Query
+		}
+	}
+	if canceled.Get("clientAlgoId") != "tb_x_sl" {
+		t.Fatalf("cancel = %s, want old client id tb_x_sl", canceled.Encode())
+	}
+	if placed.Get("type") != "STOP_MARKET" || placed.Get("algoType") != "CONDITIONAL" ||
+		placed.Get("side") != "SELL" || placed.Get("clientAlgoId") != "tb_x_sl2" {
+		t.Fatalf("new stop = %s, want SELL conditional STOP_MARKET with new id", placed.Encode())
+	}
+	if placed.Get("triggerPrice") != "61234.5" { // floored to the 0.10 tick size
+		t.Fatalf("triggerPrice = %q, want 61234.5 (floored to tick)", placed.Get("triggerPrice"))
+	}
+}
+
 func TestExecutorClosePlacesReduceOnlyMarketOrder(t *testing.T) {
 	server := newBinanceTestServer(t)
 	defer server.Close()

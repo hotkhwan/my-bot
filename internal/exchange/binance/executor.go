@@ -461,6 +461,48 @@ func (e *Executor) cancelOrder(ctx context.Context, symbol string, clientOrderID
 	}, &response)
 }
 
+// MoveStopLoss replaces the stop-loss for an open position: cancel the algo
+// order identified by oldClientAlgoID, then place a fresh STOP_MARKET at
+// newStop. The trailing-stop monitor calls this to ratchet protection in.
+// Binance forbids reusing a cancelled client order id, so the caller supplies a
+// new newClientAlgoID for each move.
+func (e *Executor) MoveStopLoss(ctx context.Context, symbol string, side domain.PositionSide, newStop decimal.Decimal, oldClientAlgoID string, newClientAlgoID string) error {
+	if err := e.validateConfig(); err != nil {
+		return err
+	}
+
+	filters, err := e.symbolFilters(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	stop, err := newStop.FloorToStep(filters.TickSize)
+	if err != nil {
+		return fmt.Errorf("round stop loss: %w", err)
+	}
+
+	exitSide := "SELL"
+	if side == domain.PositionSideShort {
+		exitSide = "BUY"
+	}
+
+	if err := e.cancelAlgoOrder(ctx, oldClientAlgoID); err != nil {
+		return fmt.Errorf("cancel previous stop loss: %w", err)
+	}
+	if _, err := e.newAlgoOrder(ctx, url.Values{
+		"symbol":        {symbol},
+		"side":          {exitSide},
+		"algoType":      {"CONDITIONAL"},
+		"type":          {"STOP_MARKET"},
+		"triggerPrice":  {stop.String()},
+		"closePosition": {"true"},
+		"workingType":   {"MARK_PRICE"},
+		"clientAlgoId":  {newClientAlgoID},
+	}); err != nil {
+		return fmt.Errorf("place new stop loss: %w", err)
+	}
+	return nil
+}
+
 func (e *Executor) cancelAlgoOrder(ctx context.Context, clientAlgoID string) error {
 	var response map[string]any
 	return e.signedRequest(ctx, http.MethodDelete, "/fapi/v1/algoOrder", url.Values{
