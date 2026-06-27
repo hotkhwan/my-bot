@@ -18,6 +18,7 @@ import (
 
 	"bottrade/internal/decimal"
 	"bottrade/internal/domain"
+	"bottrade/internal/monitor"
 	"bottrade/internal/orders"
 )
 
@@ -462,6 +463,37 @@ func (e *Executor) newAlgoOrder(ctx context.Context, params url.Values) (algoOrd
 		return algoOrderResponse{}, err
 	}
 	return response, nil
+}
+
+type algoOpenOrder struct {
+	ClientAlgoID string `json:"clientAlgoId"`
+	OrderType    string `json:"orderType"`
+	Symbol       string `json:"symbol"`
+	TriggerPrice string `json:"triggerPrice"`
+}
+
+// CurrentStop returns the active STOP_MARKET algo order for a symbol, so the
+// trailing-stop monitor knows the price to ratchet from and the id to cancel.
+// It satisfies monitor.Exchange.
+func (e *Executor) CurrentStop(ctx context.Context, symbol string) (monitor.StopState, bool, error) {
+	if err := e.validateConfig(); err != nil {
+		return monitor.StopState{}, false, err
+	}
+	var orders []algoOpenOrder
+	if err := e.signedRequest(ctx, http.MethodGet, "/fapi/v1/openAlgoOrders", url.Values{"symbol": {symbol}}, &orders); err != nil {
+		return monitor.StopState{}, false, err
+	}
+	for _, order := range orders {
+		if order.OrderType != "STOP_MARKET" {
+			continue
+		}
+		price, err := decimal.Parse(defaultDecimalString(order.TriggerPrice))
+		if err != nil {
+			return monitor.StopState{}, false, fmt.Errorf("parse stop trigger price for %s: %w", symbol, err)
+		}
+		return monitor.StopState{Price: price, ClientAlgoID: order.ClientAlgoID}, true, nil
+	}
+	return monitor.StopState{}, false, nil
 }
 
 func (e *Executor) cancelOrder(ctx context.Context, symbol string, clientOrderID string) error {

@@ -167,6 +167,30 @@ func TestExecutorMoveStopLoss(t *testing.T) {
 	}
 }
 
+func TestExecutorCurrentStop(t *testing.T) {
+	server := newBinanceTestServer(t)
+	defer server.Close()
+
+	executor := NewExecutor(ExecutorConfig{
+		APIKey:               "key",
+		APISecret:            "secret",
+		BaseURL:              server.URL,
+		Testnet:              true,
+		RequestTimeout:       time.Second,
+		ExchangeInfoCacheTTL: time.Minute,
+	}, testLogger())
+	executor.now = func() time.Time { return time.UnixMilli(1710000000000) }
+
+	stop, ok, err := executor.CurrentStop(context.Background(), "BTCUSDT")
+	if err != nil {
+		t.Fatalf("CurrentStop: %v", err)
+	}
+	// Must pick the STOP_MARKET leg, not the TAKE_PROFIT_MARKET one.
+	if !ok || stop.ClientAlgoID != "tb_x_sl" || stop.Price.String() != "59000" {
+		t.Fatalf("stop = {%+v ok:%v}, want tb_x_sl @ 59000", stop, ok)
+	}
+}
+
 func TestExecutorClosePlacesReduceOnlyMarketOrder(t *testing.T) {
 	server := newBinanceTestServer(t)
 	defer server.Close()
@@ -329,6 +353,9 @@ func newBinanceTestServer(t *testing.T) *binanceTestServer {
 			server.mu.Unlock()
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"clientAlgoId":"` + r.URL.Query().Get("clientAlgoId") + `","algoId":` + strconvInt64(algoID) + `,"symbol":"BTCUSDT","algoStatus":"NEW","type":"` + r.URL.Query().Get("type") + `"}`))
+		case "/fapi/v1/openAlgoOrders":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"clientAlgoId":"tb_x_sl","orderType":"STOP_MARKET","symbol":"BTCUSDT","triggerPrice":"59000.0"},{"clientAlgoId":"tb_x_tp","orderType":"TAKE_PROFIT_MARKET","symbol":"BTCUSDT","triggerPrice":"66000.0"}]`))
 		case "/fapi/v3/positionRisk":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionAmt":"0.010","entryPrice":"67500.0","markPrice":"68000.50","unRealizedProfit":"5.50","leverage":"3","marginType":"isolated","positionSide":"BOTH"},{"symbol":"ETHUSDT","positionAmt":"0","entryPrice":"0","markPrice":"0","unRealizedProfit":"0","leverage":"2","marginType":"isolated","positionSide":"BOTH"}]`))
