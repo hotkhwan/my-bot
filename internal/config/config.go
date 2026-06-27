@@ -117,6 +117,9 @@ type AIConfig struct {
 	MarketDataBaseURL string
 	MarketDataPeriod  string // sampling window for ratio endpoints, e.g. "5m"
 	KlineInterval     string // candle interval for EMA/RSI/MACD, e.g. "1h"
+	// Crypto Fear & Greed Index sentiment (free, key-less, market-wide).
+	FearGreedEnabled bool
+	FearGreedBaseURL string
 }
 
 // AIProvider is one member of the AI ensemble, parsed from AI_PROVIDERS (JSON).
@@ -245,6 +248,8 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.AI.MarketDataPeriod = reader.string("MARKETDATA_PERIOD", cfg.AI.MarketDataPeriod)
 	cfg.AI.KlineInterval = reader.string("MARKETDATA_KLINE_INTERVAL", cfg.AI.KlineInterval)
 	cfg.AI.MarketDataEnabled = reader.bool("MARKETDATA_ENABLED", cfg.AI.Enabled)
+	cfg.AI.FearGreedBaseURL = reader.string("FEAR_GREED_BASE_URL", cfg.AI.FearGreedBaseURL)
+	cfg.AI.FearGreedEnabled = reader.bool("FEAR_GREED_ENABLED", cfg.AI.MarketDataEnabled)
 
 	cfg.MongoDB.URI = reader.string("MONGODB_URI", cfg.MongoDB.URI)
 	cfg.MongoDB.Database = reader.string("MONGODB_DATABASE", cfg.MongoDB.Database)
@@ -311,6 +316,7 @@ func defaultConfig() Config {
 			MarketDataBaseURL:    "https://fapi.binance.com",
 			MarketDataPeriod:     "5m",
 			KlineInterval:        "1h",
+			FearGreedBaseURL:     "https://api.alternative.me",
 		},
 		Auth: AuthConfig{
 			EncryptionKeyID: "v1",

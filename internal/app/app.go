@@ -324,6 +324,9 @@ func (a *App) buildEnricher() ai.ContextEnricher {
 		ai.NewOrderFlowProvider(provider, a.cfg.AI.MarketDataPeriod),
 		ai.NewIndicatorProvider(provider, a.cfg.AI.KlineInterval, 0),
 	}
+	if a.cfg.AI.FearGreedEnabled {
+		contextProviders = append(contextProviders, ai.NewFearGreedProvider(a.cfg.AI.FearGreedBaseURL, nil))
+	}
 	a.logger.Info("market-data enrichment enabled",
 		"sources", "binance_orderflow+binance_ta", "base_url", a.cfg.AI.MarketDataBaseURL,
 		"period", a.cfg.AI.MarketDataPeriod, "kline_interval", a.cfg.AI.KlineInterval)
