@@ -170,13 +170,26 @@
       }
       function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
-      // ---- views / nav ----
+      // ---- views / nav / url routing ----
+      function pathView() {
+        const p = location.pathname.replace(/\/+$/, "");
+        if (p === "/history") return "history";
+        if (p === "/setting" || p === "/settings") return "settings";
+        if (p === "/order" || p === "/orders") return "orders";
+        return "orders";
+      }
       function showView(name) {
         ["orders", "history", "settings", "login"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== name));
         document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === name));
         if (name === "history") loadHistory();
       }
-      document.querySelectorAll("#nav button").forEach((b) => (b.onclick = () => showView(b.dataset.view)));
+      function navigate(view) {
+        const path = "/" + (view === "orders" ? "orders" : view);
+        if (location.pathname !== path) history.pushState(null, "", path);
+        showView(view);
+      }
+      document.querySelectorAll("#nav button").forEach((b) => (b.onclick = () => navigate(b.dataset.view)));
+      window.onpopstate = () => { if (localStorage.getItem("token")) showView(pathView()); };
 
       function setProfile(p) {
         if (p) localStorage.setItem("profile", JSON.stringify(p));
@@ -189,7 +202,7 @@
         if (profile) setProfile(profile); else setProfile();
         $("nav").classList.remove("hidden");
         $("logout").classList.remove("hidden");
-        showView("orders");
+        showView(pathView());
         refreshKeyStatus();
         connectStream();
         renderFavs();
