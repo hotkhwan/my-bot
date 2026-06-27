@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"bottrade/internal/ai"
@@ -375,6 +376,9 @@ func (a *App) buildEnricher() ai.ContextEnricher {
 	}
 	if a.cfg.AI.FearGreedEnabled {
 		contextProviders = append(contextProviders, ai.NewFearGreedProvider(a.cfg.AI.FearGreedBaseURL, nil))
+	}
+	if strings.TrimSpace(a.cfg.AI.NewsAPIKey) != "" {
+		contextProviders = append(contextProviders, ai.NewNewsProvider(a.cfg.AI.NewsAPIKey, a.cfg.AI.NewsBaseURL, 5, nil))
 	}
 	a.logger.Info("market-data enrichment enabled",
 		"sources", "binance_orderflow+binance_ta", "base_url", a.cfg.AI.MarketDataBaseURL,

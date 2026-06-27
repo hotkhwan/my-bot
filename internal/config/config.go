@@ -125,6 +125,10 @@ type AIConfig struct {
 	// Crypto Fear & Greed Index sentiment (free, key-less, market-wide).
 	FearGreedEnabled bool
 	FearGreedBaseURL string
+	// NewsAPI headlines (free tier, API key required). Registered only when a key
+	// is set.
+	NewsAPIKey  string
+	NewsBaseURL string
 }
 
 // AIProvider is one member of the AI ensemble, parsed from AI_PROVIDERS (JSON).
@@ -257,6 +261,8 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.AI.MarketDataEnabled = reader.bool("MARKETDATA_ENABLED", cfg.AI.Enabled)
 	cfg.AI.FearGreedBaseURL = reader.string("FEAR_GREED_BASE_URL", cfg.AI.FearGreedBaseURL)
 	cfg.AI.FearGreedEnabled = reader.bool("FEAR_GREED_ENABLED", cfg.AI.MarketDataEnabled)
+	cfg.AI.NewsAPIKey = reader.string("NEWS_API_KEY", cfg.AI.NewsAPIKey)
+	cfg.AI.NewsBaseURL = reader.string("NEWS_API_BASE_URL", cfg.AI.NewsBaseURL)
 
 	cfg.MongoDB.URI = reader.string("MONGODB_URI", cfg.MongoDB.URI)
 	cfg.MongoDB.Database = reader.string("MONGODB_DATABASE", cfg.MongoDB.Database)
