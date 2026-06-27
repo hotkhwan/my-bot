@@ -134,6 +134,7 @@ func (s *Server) routes() {
 	})
 	s.app.Post("/api/register", authLimiter, s.handleRegister)
 	s.app.Post("/api/login", authLimiter, s.handleLogin)
+	s.app.Post("/api/telegram-auth", authLimiter, s.handleTelegramAuth)
 	s.app.Get("/api/report", s.handleReport)
 	s.app.Post("/api/credentials", s.requireAuth, s.handleStoreCredential)
 	s.app.Get("/api/credentials", s.requireAuth, s.handleGetCredential)
@@ -304,6 +305,30 @@ func maskTail(s string) string {
 		return "****"
 	}
 	return "…" + s[len(s)-4:]
+}
+
+// handleTelegramAuth verifies Telegram Mini App init data and issues a session
+// token. The user identity is "tg:<telegram id>" — the same key used for
+// per-user credentials and the journal.
+func (s *Server) handleTelegramAuth(c fiber.Ctx) error {
+	if s.tokenizer == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "auth is not enabled"})
+	}
+	var body struct {
+		InitData string `json:"init_data"`
+	}
+	if err := json.Unmarshal(c.Body(), &body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
+	}
+	user, err := auth.VerifyTelegramInitData(body.InitData, s.cfg.Telegram.BotToken, 24*time.Hour, time.Now())
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid telegram login"})
+	}
+	username := user.Username
+	if username == "" {
+		username = user.FirstName
+	}
+	return c.JSON(s.loginResponse("tg:"+strconv.FormatInt(user.ID, 10), username, "user"))
 }
 
 func (s *Server) handleLogin(c fiber.Ctx) error {
