@@ -14,6 +14,7 @@ import (
 	binanceexec "bottrade/internal/exchange/binance"
 	"bottrade/internal/journal"
 	"bottrade/internal/logging"
+	"bottrade/internal/marketdata"
 	"bottrade/internal/monitor"
 	"bottrade/internal/orders"
 	"bottrade/internal/plans"
@@ -310,7 +311,25 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 	return orderService, statusService, planService, store, trailExchange, cleanup, nil
 }
 
-func (a *App) buildEnsemble() signals.Advisor {
+// buildEnricher assembles the context Aggregator that feeds the AI prompt. In
+// Phase 1 that is the free Binance Futures order-flow (funding, open interest,
+// long/short ratio, taker buy/sell). Returns nil when market-data enrichment is
+// off, in which case advisors decide from the raw signal alone.
+func (a *App) buildEnricher() ai.ContextEnricher {
+	if !a.cfg.AI.MarketDataEnabled {
+		return nil
+	}
+	provider := marketdata.NewBinanceProvider(a.cfg.AI.MarketDataBaseURL, nil)
+	orderFlow := ai.NewOrderFlowProvider(provider, a.cfg.AI.MarketDataPeriod)
+	a.logger.Info("market-data enrichment enabled",
+		"source", "binance_orderflow", "base_url", a.cfg.AI.MarketDataBaseURL, "period", a.cfg.AI.MarketDataPeriod)
+	return ai.NewAggregator(ai.AggregatorConfig{
+		Providers: []ai.ContextProvider{orderFlow},
+		Logger:    a.logger,
+	})
+}
+
+func (a *App) buildEnsemble(enricher ai.ContextEnricher) signals.Advisor {
 	specs := make([]ai.ProviderSpec, 0, len(a.cfg.AI.Providers))
 	for _, p := range a.cfg.AI.Providers {
 		specs = append(specs, ai.ProviderSpec{
@@ -321,7 +340,7 @@ func (a *App) buildEnsemble() signals.Advisor {
 			Model:    p.Model,
 		})
 	}
-	advisor, err := ai.BuildEnsemble(specs, a.cfg.AI.EnsemblePolicy, a.cfg.AI.EnsembleMinVotes, a.cfg.AI.RequestTimeout, nil)
+	advisor, err := ai.BuildEnsemble(specs, a.cfg.AI.EnsemblePolicy, a.cfg.AI.EnsembleMinVotes, a.cfg.AI.RequestTimeout, enricher)
 	if err != nil {
 		a.logger.Warn("ai ensemble build failed; AI disabled", "error", err)
 		return nil
@@ -333,8 +352,9 @@ func (a *App) buildEnsemble() signals.Advisor {
 func (a *App) newSignalProcessor(orderService *orders.Service, signalStore signals.SignalStore) *signals.Processor {
 	var advisor signals.Advisor
 	if a.cfg.AI.Enabled {
+		enricher := a.buildEnricher()
 		if len(a.cfg.AI.Providers) > 0 {
-			advisor = a.buildEnsemble()
+			advisor = a.buildEnsemble(enricher)
 		} else {
 			switch a.cfg.AI.Provider {
 			case "openai_compatible":
@@ -344,6 +364,7 @@ func (a *App) newSignalProcessor(orderService *orders.Service, signalStore signa
 					Model:          a.cfg.AI.Model,
 					SystemPrompt:   a.cfg.AI.SystemPrompt,
 					RequestTimeout: a.cfg.AI.RequestTimeout,
+					Enricher:       enricher,
 				})
 			case "anthropic":
 				advisor = ai.NewAnthropicAdvisor(ai.AnthropicConfig{
@@ -352,6 +373,7 @@ func (a *App) newSignalProcessor(orderService *orders.Service, signalStore signa
 					Model:          a.cfg.AI.Model,
 					SystemPrompt:   a.cfg.AI.SystemPrompt,
 					RequestTimeout: a.cfg.AI.RequestTimeout,
+					Enricher:       enricher,
 				})
 			default:
 				a.logger.Warn("ai provider is not supported", "provider", a.cfg.AI.Provider)

@@ -110,6 +110,12 @@ type AIConfig struct {
 	Providers        []AIProvider
 	EnsemblePolicy   string // "majority" | "consensus"
 	EnsembleMinVotes int
+	// Market-data enrichment: free Binance Futures order-flow (funding, open
+	// interest, long/short ratio, taker flow) injected into the AI prompt. Uses
+	// the production market-data host even on testnet (public, read-only).
+	MarketDataEnabled bool
+	MarketDataBaseURL string
+	MarketDataPeriod  string // sampling window for ratio endpoints, e.g. "5m"
 }
 
 // AIProvider is one member of the AI ensemble, parsed from AI_PROVIDERS (JSON).
@@ -234,6 +240,9 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	if len(cfg.AI.Providers) > 0 {
 		cfg.AI.Enabled = true
 	}
+	cfg.AI.MarketDataBaseURL = reader.string("MARKETDATA_BASE_URL", cfg.AI.MarketDataBaseURL)
+	cfg.AI.MarketDataPeriod = reader.string("MARKETDATA_PERIOD", cfg.AI.MarketDataPeriod)
+	cfg.AI.MarketDataEnabled = reader.bool("MARKETDATA_ENABLED", cfg.AI.Enabled)
 
 	cfg.MongoDB.URI = reader.string("MONGODB_URI", cfg.MongoDB.URI)
 	cfg.MongoDB.Database = reader.string("MONGODB_DATABASE", cfg.MongoDB.Database)
@@ -297,6 +306,8 @@ func defaultConfig() Config {
 			BaseURL:              "https://api.openai.com/v1",
 			RequestTimeout:       20 * time.Second,
 			MinConfidencePercent: 70,
+			MarketDataBaseURL:    "https://fapi.binance.com",
+			MarketDataPeriod:     "5m",
 		},
 		Auth: AuthConfig{
 			EncryptionKeyID: "v1",
