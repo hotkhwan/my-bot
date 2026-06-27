@@ -21,6 +21,10 @@
       button.primary { background: #3b82f6; color: #fff; }
       button.ghost { background: #8882; color: inherit; }
       .msg { margin-top: 0.75rem; font-size: 0.85rem; min-height: 1.1rem; }
+      .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
+      .chip { flex: 0 0 auto; padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: 500; background: #8882; color: inherit; border-radius: 999px; }
+      .cmdrow { display: flex; gap: 0.5rem; }
+      .output { margin-top: 0.8rem; padding: 0.8rem; background: #8881; border-radius: 0.5rem; font-size: 0.82rem; white-space: pre-wrap; word-break: break-word; min-height: 1rem; max-height: 22rem; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     </style>
   </head>
   <body>
@@ -64,6 +68,23 @@
           <button class="ghost" id="delKey">Remove</button>
         </div>
         <div class="msg" id="keyMsg"></div>
+      </section>
+
+      <section class="card" id="consoleCard" style="display:none">
+        <strong>Console</strong>
+        <p style="margin:0.3rem 0 0.6rem">One place for everything — Telegram is just the backend.</p>
+        <div class="chips">
+          <button class="chip" data-cmd="market BTC">market BTC</button>
+          <button class="chip" data-cmd="goal profit 10 risk 50">goal</button>
+          <button class="chip" data-cmd="backtest BTC">backtest BTC</button>
+          <button class="chip" data-cmd="report">report</button>
+          <button class="chip" data-cmd="help">help</button>
+        </div>
+        <div class="cmdrow">
+          <input id="cmd" placeholder="market BTC  ·  goal profit 10 risk 50" autocomplete="off" />
+          <button class="primary" id="cmd-run" style="flex:0 0 auto;width:5rem">Run</button>
+        </div>
+        <pre id="cmd-out" class="output"></pre>
       </section>
 
       <section class="card">
@@ -132,9 +153,35 @@
       function onAuthed() {
         document.getElementById("authCard").style.display = "none";
         document.getElementById("keysCard").style.display = "";
+        document.getElementById("consoleCard").style.display = "";
         refreshKeyStatus();
         connectStream();
       }
+
+      // Command console — single entry point. Runs the read/analysis commands
+      // against /api/command with the session JWT.
+      const cmdInput = document.getElementById("cmd");
+      const cmdOut = document.getElementById("cmd-out");
+      async function runCommand(command) {
+        if (!command.trim()) return;
+        cmdOut.textContent = "…";
+        try {
+          const r = await fetch("/api/command", {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ command }),
+          });
+          const d = await r.json().catch(() => ({}));
+          cmdOut.textContent = d.output || d.error || `Failed (${r.status})`;
+        } catch (e) {
+          cmdOut.textContent = "Network error";
+        }
+      }
+      document.getElementById("cmd-run").onclick = () => runCommand(cmdInput.value);
+      cmdInput.addEventListener("keydown", (e) => { if (e.key === "Enter") runCommand(cmdInput.value); });
+      document.querySelectorAll(".chip").forEach((chip) => {
+        chip.onclick = () => { cmdInput.value = chip.dataset.cmd; runCommand(chip.dataset.cmd); };
+      });
 
       // Telegram Login Widget — the primary, one-click path. The widget invokes
       // window.onTelegramAuth with the signed user object; the server verifies

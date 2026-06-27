@@ -17,6 +17,7 @@ import (
 	"bottrade/internal/config"
 	"bottrade/internal/dashboard"
 	"bottrade/internal/journal"
+	"bottrade/internal/marketdata"
 	"bottrade/internal/realtime"
 	"bottrade/internal/signals"
 	"bottrade/internal/users"
@@ -54,6 +55,7 @@ type Server struct {
 	tokenizer   *auth.Tokenizer
 	credentials *auth.CredentialService
 	stream      eventStream
+	market      *marketdata.BinanceProvider
 	logger      *slog.Logger
 	app         *fiber.App
 }
@@ -96,6 +98,7 @@ func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Log
 	server := &Server{
 		cfg:       cfg,
 		processor: processor,
+		market:    marketdata.NewBinanceProvider(cfg.AI.MarketDataBaseURL, nil),
 		logger:    logger,
 		app: fiber.New(fiber.Config{
 			AppName:   "tradebot",
@@ -155,6 +158,7 @@ func (s *Server) routes() {
 	s.app.Post("/api/telegram-login", authLimiter, s.handleTelegramLogin)
 	s.app.Get("/api/auth-config", s.handleAuthConfig)
 	s.app.Get("/api/report", s.handleReport)
+	s.app.Post("/api/command", s.requireAuth, s.handleCommand)
 	s.app.Post("/api/credentials", s.requireAuth, s.handleStoreCredential)
 	s.app.Get("/api/credentials", s.requireAuth, s.handleGetCredential)
 	s.app.Delete("/api/credentials", s.requireAuth, s.handleDeleteCredential)

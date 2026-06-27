@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 
@@ -363,7 +362,7 @@ func (h *Handler) handleCampaign(sender Sender, chatID, userID int64, text strin
 		}
 		return h.sendText(bg, sender, chatID, "No campaign is running.")
 	case "start":
-		goal, err := parseGoal(text)
+		goal, err := campaign.ParseGoal(text)
 		if err != nil {
 			return h.sendText(bg, sender, chatID, err.Error()+"\n\n"+campaignUsage)
 		}
@@ -392,7 +391,7 @@ func symbolArg(text string) string {
 }
 
 func (h *Handler) sendGoal(ctx context.Context, sender Sender, chatID int64, text string) error {
-	goal, err := parseGoal(text)
+	goal, err := campaign.ParseGoal(text)
 	if err != nil {
 		return h.sendText(ctx, sender, chatID, err.Error()+"\n\n"+goalUsage)
 	}
@@ -409,101 +408,6 @@ func (h *Handler) sendGoal(ctx context.Context, sender Sender, chatID int64, tex
 
 // parseGoal reads a goal from "/goal profit 10 capital 100 ..." with sensible
 // defaults derived from capital. Target profit is required.
-func parseGoal(text string) (campaign.Goal, error) {
-	_, rest, _ := strings.Cut(strings.TrimSpace(text), " ")
-	tokens := strings.Fields(rest)
-
-	goal := campaign.Goal{AssumedWinRate: 55, MaxTrades: 50}
-	var haveTarget, haveCapital, haveReward, haveRisk, haveDrawdown bool
-
-	for i, tok := range tokens {
-		key := strings.ToLower(strings.TrimRight(tok, ":"))
-		next := ""
-		if i+1 < len(tokens) {
-			next = tokens[i+1]
-		}
-		switch key {
-		case "profit", "target", "กำไร":
-			if v, ok := parseUSDT(next); ok {
-				goal.TargetProfitUSDT, haveTarget = v, true
-			}
-		case "capital", "ทุน":
-			if v, ok := parseUSDT(next); ok {
-				goal.CapitalUSDT, haveCapital = v, true
-			}
-		case "reward":
-			if v, ok := parseUSDT(next); ok {
-				goal.RewardPerTradeUSDT, haveReward = v, true
-			}
-		case "risk":
-			if v, ok := parseUSDT(next); ok {
-				goal.RiskPerTradeUSDT, haveRisk = v, true
-			}
-		case "winrate", "wr":
-			if n, err := strconv.Atoi(strings.TrimSuffix(next, "%")); err == nil {
-				goal.AssumedWinRate = n
-			}
-		case "maxtrades", "trades":
-			if n, err := strconv.Atoi(next); err == nil {
-				goal.MaxTrades = n
-			}
-		case "drawdown", "dd":
-			if v, ok := parseUSDT(next); ok {
-				goal.MaxDrawdownUSDT, haveDrawdown = v, true
-			}
-		}
-	}
-
-	// Fallback: grab the first USDT-suffixed amount as the target (handles
-	// "ทำกำไร 10usdt").
-	if !haveTarget {
-		for _, tok := range tokens {
-			if strings.HasSuffix(strings.ToLower(tok), "usdt") {
-				if v, ok := parseUSDT(tok); ok {
-					goal.TargetProfitUSDT, haveTarget = v, true
-					break
-				}
-			}
-		}
-	}
-	if !haveTarget || !goal.TargetProfitUSDT.IsPositive() {
-		return campaign.Goal{}, fmt.Errorf("I need a target profit, e.g. \"profit 10\".")
-	}
-
-	if !haveCapital {
-		goal.CapitalUSDT = decimal.NewFromInt(100)
-	}
-	// Defaults scaled to capital: 2%% reward, 1%% risk, 30%% max drawdown.
-	if !haveReward {
-		goal.RewardPerTradeUSDT = percentOf(goal.CapitalUSDT, 2)
-	}
-	if !haveRisk {
-		goal.RiskPerTradeUSDT = percentOf(goal.CapitalUSDT, 1)
-	}
-	if !haveDrawdown {
-		goal.MaxDrawdownUSDT = percentOf(goal.CapitalUSDT, 30)
-	}
-	return goal, nil
-}
-
-func parseUSDT(s string) (decimal.Decimal, bool) {
-	s = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s)), "usdt")
-	s = strings.TrimSuffix(s, "$")
-	v, err := decimal.Parse(s)
-	if err != nil || v.Cmp(decimal.Zero()) < 0 {
-		return decimal.Zero(), false
-	}
-	return v, true
-}
-
-func percentOf(amount decimal.Decimal, pct int64) decimal.Decimal {
-	v, err := amount.Mul(decimal.NewFromInt(pct)).QuoFloor(decimal.NewFromInt(100), 8)
-	if err != nil {
-		return decimal.Zero()
-	}
-	return v
-}
-
 func formatGoal(goal campaign.Goal, estimate int, result campaign.SimulationResult) string {
 	wins := 0
 	for _, o := range result.Outcomes {
@@ -522,8 +426,8 @@ func formatGoal(goal campaign.Goal, estimate int, result campaign.SimulationResu
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "🎯 Goal: make %s USDT from %s USDT capital\n", goal.TargetProfitUSDT.String(), goal.CapitalUSDT.String())
-	fmt.Fprintf(&b, "Assumptions: win-rate %d%%, reward %s, risk %s per trade\n",
-		goal.AssumedWinRate, goal.RewardPerTradeUSDT.String(), goal.RiskPerTradeUSDT.String())
+	fmt.Fprintf(&b, "Risk: up to %d%% of capital (stop at -%s USDT), assumed win-rate %d%%\n",
+		goal.RiskPercent(), goal.MaxDrawdownUSDT.String(), goal.AssumedWinRate)
 	fmt.Fprintf(&b, "Expectancy: %s USDT/trade → ~%d trades needed\n\n", goal.ExpectedPerTrade().String(), estimate)
 	fmt.Fprintf(&b, "📊 Simulation (no real orders): %s\n", verdictText)
 	fmt.Fprintf(&b, "Trades: %d (%d win / %d loss) · Final PnL: %s USDT\n",
