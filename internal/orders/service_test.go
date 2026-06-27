@@ -72,6 +72,46 @@ func TestServiceJournalsClosedTradeOnly(t *testing.T) {
 	}
 }
 
+type stubProvider struct {
+	executor Executor
+	found    bool
+}
+
+func (p stubProvider) ExecutorFor(context.Context, string) (Executor, bool, error) {
+	return p.executor, p.found, nil
+}
+
+func TestServiceUsesPerUserExecutorWithFallback(t *testing.T) {
+	ctx := context.Background()
+	perUser := stubExecutor{result: ExecutionResult{Mode: "per-user", ClientOrderID: "pu"}}
+
+	withKey := NewServiceWithRepositories(5*time.Minute, DryRunExecutor{DryRun: true},
+		ServiceDependencies{ExecutorProvider: stubProvider{executor: perUser, found: true}}, testLogger())
+	conf, err := withKey.Prepare(ctx, 12345, testOpenIntent())
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	res, err := withKey.Confirm(ctx, 12345, conf.ID)
+	if err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if res.Mode != "per-user" {
+		t.Fatalf("mode = %q, want per-user (the user's own executor)", res.Mode)
+	}
+
+	// A user with no stored key falls back to the default executor.
+	fallback := NewServiceWithRepositories(5*time.Minute, DryRunExecutor{DryRun: true},
+		ServiceDependencies{ExecutorProvider: stubProvider{found: false}}, testLogger())
+	conf2, _ := fallback.Prepare(ctx, 12345, testOpenIntent())
+	res2, err := fallback.Confirm(ctx, 12345, conf2.ID)
+	if err != nil {
+		t.Fatalf("confirm fallback: %v", err)
+	}
+	if res2.Mode != "dry_run" {
+		t.Fatalf("mode = %q, want dry_run (fallback to default)", res2.Mode)
+	}
+}
+
 func TestServiceConfirmExecutesDryRunOnce(t *testing.T) {
 	service := NewServiceWithExecutor(5*time.Minute, DryRunExecutor{DryRun: true}, testLogger())
 	intent := testOpenIntent()

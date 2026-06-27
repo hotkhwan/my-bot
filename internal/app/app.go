@@ -302,8 +302,9 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 	executor := orders.Executor(orders.DryRunExecutor{DryRun: true})
 	positionProvider := orders.PositionProvider(orders.EmptyPositionProvider{})
 	var trailExchange monitor.Exchange
+	var executorProvider orders.ExecutorProvider
 	if !a.cfg.App.DryRun {
-		binanceExecutor := binanceexec.NewExecutor(binanceexec.ExecutorConfig{
+		execCfg := binanceexec.ExecutorConfig{
 			APIKey:               a.cfg.Binance.APIKey,
 			APISecret:            a.cfg.Binance.APISecret,
 			BaseURL:              a.cfg.Binance.FuturesBaseURL,
@@ -311,10 +312,21 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 			RealTradingEnabled:   a.cfg.App.RealTradingEnabled,
 			RequestTimeout:       a.cfg.Binance.RequestTimeout,
 			ExchangeInfoCacheTTL: a.cfg.Binance.ExchangeInfoCacheTTL,
-		}, a.logger)
+		}
+		binanceExecutor := binanceexec.NewExecutor(execCfg, a.logger)
 		executor = binanceExecutor
 		positionProvider = binanceExecutor
 		trailExchange = binanceExecutor
+
+		// Per-user executors: each user trades on their own stored key. Falls
+		// back to the shared executor (above) when a user has no key.
+		if a.cfg.Auth.Enabled {
+			if keyring, err := auth.NewKeyring(map[string][]byte{a.cfg.Auth.EncryptionKeyID: a.cfg.Auth.EncryptionKey}, a.cfg.Auth.EncryptionKeyID); err == nil {
+				if credentialService, err := auth.NewCredentialService(keyring, store.Credentials()); err == nil {
+					executorProvider = binanceexec.NewExecutorProvider(execCfg, credentialService, a.logger)
+				}
+			}
+		}
 	}
 
 	var tradeJournal orders.TradeJournal
@@ -326,6 +338,7 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 		IntentStore:       store,
 		AuditRecorder:     store,
 		Journal:           tradeJournal,
+		ExecutorProvider:  executorProvider,
 	}, a.logger)
 	statusService := orders.NewStatusService(positionProvider)
 	planService := plans.NewService(store)

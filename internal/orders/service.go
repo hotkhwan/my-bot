@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -64,6 +65,14 @@ type Executor interface {
 	Execute(ctx context.Context, confirmation Confirmation) (ExecutionResult, error)
 }
 
+// ExecutorProvider resolves the executor for a specific user, so each user
+// trades on their own Binance account. Optional; when nil (or when a user has no
+// stored key) the service uses its default executor. The bool reports whether a
+// per-user executor was found.
+type ExecutorProvider interface {
+	ExecutorFor(ctx context.Context, userKey string) (Executor, bool, error)
+}
+
 // TradeJournal records closed trades for win-rate / PnL statistics. Optional;
 // when nil the order flow runs without journaling.
 type TradeJournal interface {
@@ -85,6 +94,7 @@ type Service struct {
 	intentStore   IntentStore
 	auditRecorder audit.Recorder
 	executor      Executor
+	executorFor   ExecutorProvider
 	journal       TradeJournal
 	logger        *slog.Logger
 }
@@ -94,6 +104,7 @@ type ServiceDependencies struct {
 	IntentStore       IntentStore
 	AuditRecorder     audit.Recorder
 	Journal           TradeJournal
+	ExecutorProvider  ExecutorProvider
 }
 
 func NewService(dryRun bool, ttl time.Duration, logger *slog.Logger) *Service {
@@ -142,9 +153,35 @@ func NewServiceWithRepositories(ttl time.Duration, executor Executor, deps Servi
 		intentStore:   deps.IntentStore,
 		auditRecorder: deps.AuditRecorder,
 		executor:      executor,
+		executorFor:   deps.ExecutorProvider,
 		journal:       deps.Journal,
 		logger:        logger,
 	}
+}
+
+// executorForUser returns the user's own executor when a provider is configured
+// and the user has a stored key; otherwise the default executor. A provider
+// error is logged and falls back to the default so a lookup failure never
+// silently drops a trade.
+func (s *Service) executorForUser(ctx context.Context, userID int64) Executor {
+	if s.executorFor == nil {
+		return s.executor
+	}
+	executor, ok, err := s.executorFor.ExecutorFor(ctx, TraderKey(userID))
+	if err != nil {
+		s.logger.Warn("per-user executor lookup failed; using default", "user_id", userID, "error", err)
+		return s.executor
+	}
+	if ok {
+		return executor
+	}
+	return s.executor
+}
+
+// TraderKey is the per-user credential/identity key for a Telegram user id,
+// matching the "tg:<id>" subject minted by Telegram login.
+func TraderKey(userID int64) string {
+	return "tg:" + strconv.FormatInt(userID, 10)
 }
 
 func (s *Service) Prepare(ctx context.Context, userID int64, intent domain.Intent) (Confirmation, error) {
@@ -224,7 +261,7 @@ func (s *Service) Confirm(ctx context.Context, userID int64, id string) (Executi
 	}
 
 	s.updateIntentStatus(ctx, confirmation.ID, IntentStatusExecuting, "")
-	result, err = s.executor.Execute(ctx, confirmation)
+	result, err = s.executorForUser(ctx, userID).Execute(ctx, confirmation)
 	if err != nil {
 		_ = s.store.Fail(ctx, id, err.Error())
 		s.updateIntentStatus(ctx, confirmation.ID, IntentStatusFailed, err.Error())
