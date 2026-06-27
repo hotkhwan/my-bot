@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"bottrade/internal/backtest"
 	"bottrade/internal/decimal"
 	"bottrade/internal/domain"
 	"bottrade/internal/marketdata"
@@ -33,18 +34,28 @@ type Handler struct {
 	planService   *plans.Service
 	marketData    marketdata.Provider
 	marketPeriod  string
+	klines        klineSource
 	logger        *slog.Logger
 }
 
+// klineSource provides historical closes for the /backtest command.
+type klineSource interface {
+	Closes(ctx context.Context, symbol, interval string, limit int) ([]float64, error)
+}
+
 // WithMarketData attaches a market-data provider so the /market command can
-// report live Binance order-flow (funding, OI, long/short, taker). Returns the
-// handler for chaining. When unset, /market replies that it is unavailable.
+// report live Binance order-flow (funding, OI, long/short, taker). If the
+// provider also supplies klines, it enables /backtest too. Returns the handler
+// for chaining. When unset, /market and /backtest reply that they are unavailable.
 func (h *Handler) WithMarketData(provider marketdata.Provider, period string) *Handler {
 	if strings.TrimSpace(period) == "" {
 		period = "5m"
 	}
 	h.marketData = provider
 	h.marketPeriod = period
+	if ks, ok := provider.(klineSource); ok {
+		h.klines = ks
+	}
 	return h
 }
 
@@ -129,6 +140,8 @@ func (h *Handler) Handle(ctx context.Context, sender Sender, update *models.Upda
 		return h.sendStatus(ctx, sender, message.Chat.ID)
 	case "/market":
 		return h.sendMarket(ctx, sender, message.Chat.ID, commandArg(text))
+	case "/backtest":
+		return h.sendBacktest(ctx, sender, message.Chat.ID, commandArg(text))
 	}
 
 	intent, err := h.parser.Parse(text)
@@ -298,6 +311,38 @@ func (h *Handler) sendMarket(ctx context.Context, sender Sender, chatID int64, a
 		return h.sendText(ctx, sender, chatID, "Could not fetch market data for "+symbol+".")
 	}
 	return h.sendText(ctx, sender, chatID, formatMarketSnapshot(snapshot))
+}
+
+func (h *Handler) sendBacktest(ctx context.Context, sender Sender, chatID int64, arg string) error {
+	if h.klines == nil {
+		return h.sendText(ctx, sender, chatID, "Backtesting is not configured.")
+	}
+	symbol := marketSymbol(arg)
+	closes, err := h.klines.Closes(ctx, symbol, "1h", 500)
+	if err != nil {
+		h.logger.Warn("backtest klines fetch failed", "symbol", symbol, "error", err)
+		return h.sendText(ctx, sender, chatID, "Could not fetch history for "+symbol+".")
+	}
+
+	strategies := []backtest.Strategy{
+		backtest.EMACrossStrategy{Fast: 12, Slow: 26},
+		backtest.RSIReversionStrategy{Period: 14, Low: 30, High: 70},
+	}
+	cfg := backtest.Config{FeeRate: 0.0004}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "🧪 Backtest %s (1h, %d bars, fee 0.04%%/side)", symbol, len(closes))
+	for _, strategy := range strategies {
+		result, err := backtest.Run(closes, strategy, cfg)
+		if err != nil {
+			fmt.Fprintf(&b, "\n\n%s: %v", strategy.Name(), err)
+			continue
+		}
+		fmt.Fprintf(&b, "\n\n%s\nTrades: %d | Win rate: %.0f%%\nReturn: %.2f%% | Max DD: %.2f%%",
+			result.Strategy, result.Trades, result.WinRatePct, result.ReturnPct, result.MaxDrawdownPct)
+	}
+	b.WriteString("\n\nPast performance is not indicative of future results.")
+	return h.sendText(ctx, sender, chatID, b.String())
 }
 
 func formatMarketSnapshot(s marketdata.Snapshot) string {

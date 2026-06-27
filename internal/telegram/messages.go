@@ -21,6 +21,9 @@ Market data (free Binance order-flow the AI reads):
 /market BTC
 /market ETHUSDT
 
+Backtest a strategy on history (offline, no risk):
+/backtest BTC
+
 Phase 2 management:
 be BTC
 move sl BTC to be

@@ -65,6 +65,45 @@ func TestHandlerMarketCommandWithoutProvider(t *testing.T) {
 	}
 }
 
+type fakeMarketWithKlines struct {
+	marketdata.MockProvider
+	closes []float64
+}
+
+func (f fakeMarketWithKlines) Closes(context.Context, string, string, int) ([]float64, error) {
+	return f.closes, nil
+}
+
+func TestHandlerBacktestCommand(t *testing.T) {
+	closes := make([]float64, 0, 80)
+	for i := 0; i < 80; i++ {
+		closes = append(closes, 100+float64(i))
+	}
+	handler := NewHandler(12345, nil, testLogger()).WithMarketData(fakeMarketWithKlines{closes: closes}, "1h")
+	sender := &fakeSender{}
+
+	if err := handler.Handle(context.Background(), sender, textUpdate(12345, 111, "/backtest BTC")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	got := sender.singleMessage(t)
+	for _, want := range []string{"Backtest BTCUSDT", "ema_cross", "rsi_reversion", "Win rate", "Return"} {
+		if !strings.Contains(got.Text, want) {
+			t.Fatalf("backtest message missing %q: %q", want, got.Text)
+		}
+	}
+}
+
+func TestHandlerBacktestWithoutKlines(t *testing.T) {
+	handler := NewHandler(12345, nil, testLogger())
+	sender := &fakeSender{}
+	if err := handler.Handle(context.Background(), sender, textUpdate(12345, 111, "/backtest BTC")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got := sender.singleMessage(t); !strings.Contains(got.Text, "not configured") {
+		t.Fatalf("message = %q, want not-configured notice", got.Text)
+	}
+}
+
 func TestHandlerStartCommand(t *testing.T) {
 	handler := NewHandler(12345, nil, testLogger())
 	sender := &fakeSender{}
