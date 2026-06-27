@@ -75,6 +75,31 @@ func TestMulQuoFloorAndFloorToStep(t *testing.T) {
 	}
 }
 
+func TestAddSub(t *testing.T) {
+	cases := []struct {
+		name     string
+		a, b     string
+		add, sub string
+	}{
+		{"same scale", "1.20", "0.30", "1.5", "0.9"},
+		{"different scale", "1.2", "0.05", "1.25", "1.15"},
+		{"cross zero", "0.9", "1.1", "2", "-0.2"},
+		{"negatives", "-5", "-2.5", "-7.5", "-2.5"},
+		{"to zero", "100.00", "100", "200", "0"},
+		{"pnl sum", "0.9", "1.2", "2.1", "-0.3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MustParse(tc.a).Add(MustParse(tc.b)).String(); got != tc.add {
+				t.Fatalf("%s + %s = %q, want %q", tc.a, tc.b, got, tc.add)
+			}
+			if got := MustParse(tc.a).Sub(MustParse(tc.b)).String(); got != tc.sub {
+				t.Fatalf("%s - %s = %q, want %q", tc.a, tc.b, got, tc.sub)
+			}
+		})
+	}
+}
+
 func TestJSONRoundTrip(t *testing.T) {
 	data, err := json.Marshal(MustParse("1.2300"))
 	if err != nil {

@@ -182,6 +182,29 @@ func (d Decimal) Mul(other Decimal) Decimal {
 	})
 }
 
+// Add returns d plus other, preserving exactness.
+func (d Decimal) Add(other Decimal) Decimal {
+	left, right := align(d, other)
+	return normalize(Decimal{value: new(big.Int).Add(left, right), scale: commonScale(d, other)})
+}
+
+// Sub returns d minus other, preserving exactness.
+func (d Decimal) Sub(other Decimal) Decimal {
+	left, right := align(d, other)
+	return normalize(Decimal{value: new(big.Int).Sub(left, right), scale: commonScale(d, other)})
+}
+
+// commonScale is the aligned scale used by Add/Sub: the larger of the two
+// normalized scales, matching how align widens the coefficients.
+func commonScale(a Decimal, b Decimal) int {
+	a = normalize(a)
+	b = normalize(b)
+	if a.scale > b.scale {
+		return a.scale
+	}
+	return b.scale
+}
+
 // QuoFloor divides d by divisor and floors the result to scale decimal places.
 func (d Decimal) QuoFloor(divisor Decimal, scale int) (Decimal, error) {
 	d = normalize(d)
