@@ -98,10 +98,19 @@
           <button class="primary" id="cmd-run" style="flex:0 0 auto;width:5rem">Run</button>
         </div>
         <pre id="cmd-out" class="output"></pre>
+        <div id="cmd-spark"></div>
         <div id="cmd-confirm" class="actions" style="display:none">
           <button class="primary" id="cmd-yes">Confirm</button>
           <button class="ghost" id="cmd-no">Cancel</button>
         </div>
+      </section>
+
+      <section class="card" id="coinsCard" style="display:none">
+        <strong>Coins</strong>
+        <p style="margin:0.3rem 0 0.5rem">Search Binance Futures, star favourites, reorder, and tap to act.</p>
+        <input id="coinSearch" placeholder="search e.g. SOL, PEPE…" autocomplete="off" />
+        <div id="coinResults" class="chips" style="margin-top:0.5rem"></div>
+        <div id="favs" style="margin-top:0.3rem"></div>
       </section>
 
       <section class="card">
@@ -191,20 +200,74 @@
         document.getElementById("authCard").style.display = "none";
         document.getElementById("keysCard").style.display = "";
         document.getElementById("consoleCard").style.display = "";
+        document.getElementById("coinsCard").style.display = "";
         refreshKeyStatus();
         connectStream();
+        renderFavs();
       }
+
+      // Coins: search Binance Futures symbols + a reorderable favourites list
+      // (stored on this device). Tapping a coin runs `market <SYM>` in the console.
+      function getFavs() { try { return JSON.parse(localStorage.getItem("favs") || "[]"); } catch (_) { return []; } }
+      function saveFavs(f) { localStorage.setItem("favs", JSON.stringify(f)); renderFavs(); }
+      function addFav(sym) { const f = getFavs(); if (!f.includes(sym)) { f.push(sym); saveFavs(f); } }
+      function removeFav(sym) { saveFavs(getFavs().filter((s) => s !== sym)); }
+      function moveFav(i, d) {
+        const f = getFavs(); const j = i + d;
+        if (j < 0 || j >= f.length) return;
+        [f[i], f[j]] = [f[j], f[i]]; saveFavs(f);
+      }
+      function renderFavs() {
+        const f = getFavs();
+        const box = document.getElementById("favs");
+        if (!f.length) { box.innerHTML = '<p style="color:#888;font-size:0.85rem">No favourites yet — search above and tap ☆.</p>'; return; }
+        box.innerHTML = f.map((s, i) =>
+          `<div class="profile"><span class="name" data-coin="${s}" style="cursor:pointer">${s}</span><span class="spacer"></span>` +
+          `<button class="ghost" data-up="${i}">↑</button><button class="ghost" data-down="${i}">↓</button><button class="ghost" data-rm="${s}">✕</button></div>`
+        ).join("");
+        box.querySelectorAll("[data-coin]").forEach((b) => (b.onclick = () => { cmdInput.value = "market " + b.dataset.coin; runCommand(cmdInput.value); }));
+        box.querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.up, -1)));
+        box.querySelectorAll("[data-down]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.down, 1)));
+        box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => removeFav(b.dataset.rm)));
+      }
+      let coinSearchTimer = null;
+      document.getElementById("coinSearch").addEventListener("input", (e) => {
+        clearTimeout(coinSearchTimer);
+        const q = e.target.value.trim();
+        coinSearchTimer = setTimeout(async () => {
+          const r = await fetch("/api/symbols?q=" + encodeURIComponent(q), { headers: authHeaders() });
+          const d = await r.json().catch(() => ({}));
+          const box = document.getElementById("coinResults");
+          box.innerHTML = (d.symbols || []).slice(0, 16).map((s) => `<button class="chip" data-add="${s}">☆ ${s}</button>`).join("");
+          box.querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => addFav(b.dataset.add)));
+        }, 250);
+      });
 
       // Command console — single entry point. Runs the read/analysis commands
       // against /api/command with the session JWT.
       const cmdInput = document.getElementById("cmd");
       const cmdOut = document.getElementById("cmd-out");
+      const cmdSpark = document.getElementById("cmd-spark");
       const cmdConfirm = document.getElementById("cmd-confirm");
       let pendingConfirmId = null;
+
+      function sparkline(vals) {
+        if (!vals.length) return "";
+        const w = 280, h = 48, pad = 3;
+        const min = Math.min(0, ...vals), max = Math.max(0, ...vals);
+        const range = max - min || 1;
+        const y = (v) => h - pad - ((v - min) / range) * (h - 2 * pad);
+        const pts = vals.map((v, i) => `${(pad + (i / Math.max(1, vals.length - 1)) * (w - 2 * pad)).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+        const color = vals[vals.length - 1] >= 0 ? "#16a34a" : "#dc2626";
+        return `<svg width="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="margin-top:0.5rem">
+          <line x1="0" y1="${y(0).toFixed(1)}" x2="${w}" y2="${y(0).toFixed(1)}" stroke="#8884" stroke-dasharray="3"/>
+          <polyline fill="none" stroke="${color}" stroke-width="2" points="${pts}"/></svg>`;
+      }
 
       async function runCommand(command) {
         if (!command.trim()) return;
         cmdConfirm.style.display = "none";
+        cmdSpark.innerHTML = "";
         pendingConfirmId = null;
         cmdOut.textContent = "…";
         try {
@@ -215,6 +278,7 @@
           });
           const d = await r.json().catch(() => ({}));
           cmdOut.textContent = d.output || d.error || `Failed (${r.status})`;
+          if (d.curve && d.curve.length) cmdSpark.innerHTML = sparkline(d.curve.map(Number));
           if (d.confirm_id) {
             pendingConfirmId = d.confirm_id;
             cmdConfirm.style.display = "";

@@ -39,7 +39,8 @@ func (s *Server) handleCommand(c fiber.Ctx) error {
 	case "market":
 		return c.JSON(fiber.Map{"output": s.commandMarket(c, rest)})
 	case "goal":
-		return c.JSON(fiber.Map{"output": commandGoal(text)})
+		output, curve := commandGoal(text)
+		return c.JSON(fiber.Map{"output": output, "curve": curve})
 	case "backtest":
 		return c.JSON(fiber.Map{"output": s.commandBacktest(c, rest)})
 	case "report":
@@ -112,6 +113,16 @@ func (s *Server) handleConfirm(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"output": out})
 }
 
+// handleSymbols searches the tradable Binance Futures symbols for the coin
+// picker. Authenticated; the list itself is public data.
+func (s *Server) handleSymbols(c fiber.Ctx) error {
+	symbols, err := s.market.SearchSymbols(c.Context(), c.Query("q"), 25)
+	if err != nil {
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "could not load symbols"})
+	}
+	return c.JSON(fiber.Map{"symbols": symbols})
+}
+
 // webUserID extracts the numeric Telegram id from a "tg:<id>" JWT subject.
 func webUserID(c fiber.Ctx) (int64, bool) {
 	subject := claimsOf(c).Subject
@@ -164,14 +175,14 @@ func (s *Server) commandMarket(c fiber.Ctx, arg string) string {
 	return b.String()
 }
 
-func commandGoal(text string) string {
+func commandGoal(text string) (string, []string) {
 	goal, err := campaign.ParseGoal(text)
 	if err != nil {
-		return err.Error() + "\n\nExample: goal profit 10 risk 50"
+		return err.Error() + "\n\nExample: goal profit 10 risk 50", nil
 	}
 	estimate, err := campaign.EstimateTrades(goal)
 	if err != nil {
-		return "⚠️ " + err.Error()
+		return "⚠️ " + err.Error(), nil
 	}
 	result := campaign.Simulate(goal)
 	wins := 0
@@ -196,7 +207,14 @@ func commandGoal(text string) string {
 	fmt.Fprintf(&b, "Expectancy: %s USDT/trade → ~%d trades needed\n\n", goal.ExpectedPerTrade().String(), estimate)
 	fmt.Fprintf(&b, "📊 Simulation (no real orders): %s\n", verdict)
 	fmt.Fprintf(&b, "Trades: %d (%d win / %d loss) · Final PnL: %s USDT", result.State.TradesClosed, wins, result.State.TradesClosed-wins, result.State.RealizedPnL.String())
-	return b.String()
+
+	// Running-PnL curve, one point per trade — the dashboard draws it as a
+	// sparkline like a bot's PnL chart.
+	curve := make([]string, 0, len(result.Outcomes))
+	for _, o := range result.Outcomes {
+		curve = append(curve, o.RunningPnL.String())
+	}
+	return b.String(), curve
 }
 
 func (s *Server) commandBacktest(c fiber.Ctx, arg string) string {

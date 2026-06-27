@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"bottrade/internal/decimal"
@@ -25,6 +27,11 @@ const DefaultBinanceBaseURL = "https://fapi.binance.com"
 type BinanceProvider struct {
 	baseURL string
 	client  *http.Client
+
+	mu         sync.Mutex
+	symbols    []string
+	symbolsAt  time.Time
+	symbolsTTL time.Duration
 }
 
 // NewBinanceProvider builds a provider. An empty baseURL defaults to production;
@@ -36,7 +43,72 @@ func NewBinanceProvider(baseURL string, client *http.Client) *BinanceProvider {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &BinanceProvider{baseURL: strings.TrimRight(baseURL, "/"), client: client}
+	return &BinanceProvider{baseURL: strings.TrimRight(baseURL, "/"), client: client, symbolsTTL: time.Hour}
+}
+
+// Symbols returns the tradable USDT-margined perpetual symbols on Binance
+// Futures, cached for an hour. The list is sorted alphabetically.
+func (p *BinanceProvider) Symbols(ctx context.Context) ([]string, error) {
+	p.mu.Lock()
+	if len(p.symbols) > 0 && time.Since(p.symbolsAt) < p.symbolsTTL {
+		out := append([]string(nil), p.symbols...)
+		p.mu.Unlock()
+		return out, nil
+	}
+	p.mu.Unlock()
+
+	var body struct {
+		Symbols []struct {
+			Symbol       string `json:"symbol"`
+			Status       string `json:"status"`
+			ContractType string `json:"contractType"`
+			QuoteAsset   string `json:"quoteAsset"`
+		} `json:"symbols"`
+	}
+	if err := p.get(ctx, "/fapi/v1/exchangeInfo", nil, &body); err != nil {
+		return nil, err
+	}
+	symbols := make([]string, 0, len(body.Symbols))
+	for _, s := range body.Symbols {
+		if s.Status == "TRADING" && s.ContractType == "PERPETUAL" && s.QuoteAsset == "USDT" {
+			symbols = append(symbols, s.Symbol)
+		}
+	}
+	sort.Strings(symbols)
+
+	p.mu.Lock()
+	p.symbols = symbols
+	p.symbolsAt = time.Now()
+	p.mu.Unlock()
+	return symbols, nil
+}
+
+// SearchSymbols returns up to limit symbols matching query (case-insensitive
+// substring), favouring prefix matches. An empty query returns the first limit
+// symbols.
+func (p *BinanceProvider) SearchSymbols(ctx context.Context, query string, limit int) ([]string, error) {
+	all, err := p.Symbols(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	query = strings.ToUpper(strings.TrimSpace(query))
+
+	var prefix, contains []string
+	for _, sym := range all {
+		if query == "" || strings.HasPrefix(sym, query) {
+			prefix = append(prefix, sym)
+		} else if strings.Contains(sym, query) {
+			contains = append(contains, sym)
+		}
+	}
+	out := append(prefix, contains...)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (p *BinanceProvider) Funding(ctx context.Context, symbol string) (Funding, error) {
