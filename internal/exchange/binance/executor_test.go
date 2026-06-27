@@ -86,6 +86,48 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 	}
 }
 
+func TestExecutorOpenRollsBackWhenStopLossFails(t *testing.T) {
+	server := newBinanceTestServer(t)
+	server.failStopLoss = true
+	defer server.Close()
+
+	executor := NewExecutor(ExecutorConfig{
+		APIKey:               "key",
+		APISecret:            "secret",
+		BaseURL:              server.URL,
+		Testnet:              true,
+		RequestTimeout:       time.Second,
+		ExchangeInfoCacheTTL: time.Minute,
+	}, testLogger())
+	executor.now = func() time.Time { return time.UnixMilli(1710000000000) }
+
+	_, err := executor.Execute(context.Background(), testOpenConfirmation())
+	if err == nil {
+		t.Fatal("expected stop loss placement to fail")
+	}
+	if !strings.Contains(err.Error(), "stop loss") {
+		t.Fatalf("error = %v, want stop loss failure", err)
+	}
+
+	// The entry order was placed before the SL failed; rollback must cancel it
+	// so no unprotected order/position is left behind.
+	var canceledEntry, checkedPosition bool
+	for _, rq := range server.Requests() {
+		switch rq.MethodPath {
+		case "DELETE /fapi/v1/order":
+			canceledEntry = true
+		case "GET /fapi/v3/positionRisk":
+			checkedPosition = true
+		}
+	}
+	if !canceledEntry {
+		t.Fatal("rollback did not cancel the entry order")
+	}
+	if !checkedPosition {
+		t.Fatal("rollback did not check for an open position to flatten")
+	}
+}
+
 func TestExecutorClosePlacesReduceOnlyMarketOrder(t *testing.T) {
 	server := newBinanceTestServer(t)
 	defer server.Close()
@@ -178,9 +220,10 @@ func TestExecutorRefusesNonTestnetWhenRealTradingDisabled(t *testing.T) {
 
 type binanceTestServer struct {
 	*httptest.Server
-	mu       sync.Mutex
-	requests []recordedRequest
-	orderID  int64
+	mu           sync.Mutex
+	requests     []recordedRequest
+	orderID      int64
+	failStopLoss bool // when true, the STOP_MARKET algo order is rejected
 }
 
 type recordedRequest struct {
@@ -215,6 +258,11 @@ func newBinanceTestServer(t *testing.T) *binanceTestServer {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"leverage":3,"symbol":"BTCUSDT"}`))
 		case "/fapi/v1/order":
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"clientOrderId":"` + r.URL.Query().Get("origClientOrderId") + `","orderId":1,"symbol":"BTCUSDT","status":"CANCELED"}`))
+				return
+			}
 			server.mu.Lock()
 			server.orderID++
 			orderID := server.orderID
@@ -222,6 +270,16 @@ func newBinanceTestServer(t *testing.T) *binanceTestServer {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"clientOrderId":"` + r.URL.Query().Get("newClientOrderId") + `","orderId":` + strconvInt64(orderID) + `,"symbol":"BTCUSDT","status":"NEW","type":"` + r.URL.Query().Get("type") + `"}`))
 		case "/fapi/v1/algoOrder":
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"algoId":1,"clientAlgoId":"` + r.URL.Query().Get("clientAlgoId") + `","code":"200","msg":"success"}`))
+				return
+			}
+			if server.failStopLoss && r.URL.Query().Get("type") == "STOP_MARKET" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":-2021,"msg":"Order would immediately trigger."}`))
+				return
+			}
 			server.mu.Lock()
 			server.orderID++
 			algoID := server.orderID

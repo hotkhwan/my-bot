@@ -199,6 +199,7 @@ func (e *Executor) executeOpen(ctx context.Context, confirmation orders.Confirma
 		"clientAlgoId":  {clientOrderID(confirmation.ID, "sl")},
 	})
 	if err != nil {
+		e.rollbackOpen(ctx, intent.Symbol, confirmation.ID, false)
 		return orders.ExecutionResult{}, fmt.Errorf("place stop loss order: %w", err)
 	}
 
@@ -213,6 +214,7 @@ func (e *Executor) executeOpen(ctx context.Context, confirmation orders.Confirma
 		"clientAlgoId":  {clientOrderID(confirmation.ID, "tp")},
 	})
 	if err != nil {
+		e.rollbackOpen(ctx, intent.Symbol, confirmation.ID, true)
 		return orders.ExecutionResult{}, fmt.Errorf("place take profit order: %w", err)
 	}
 
@@ -449,6 +451,82 @@ func (e *Executor) newAlgoOrder(ctx context.Context, params url.Values) (algoOrd
 		return algoOrderResponse{}, err
 	}
 	return response, nil
+}
+
+func (e *Executor) cancelOrder(ctx context.Context, symbol string, clientOrderID string) error {
+	var response map[string]any
+	return e.signedRequest(ctx, http.MethodDelete, "/fapi/v1/order", url.Values{
+		"symbol":            {symbol},
+		"origClientOrderId": {clientOrderID},
+	}, &response)
+}
+
+func (e *Executor) cancelAlgoOrder(ctx context.Context, clientAlgoID string) error {
+	var response map[string]any
+	return e.signedRequest(ctx, http.MethodDelete, "/fapi/v1/algoOrder", url.Values{
+		"clientAlgoId": {clientAlgoID},
+	}, &response)
+}
+
+// flattenPosition closes any open position on the symbol with a reduce-only
+// market order. Used during open rollback so a filled entry is never left
+// without protection.
+func (e *Executor) flattenPosition(ctx context.Context, symbol string, clientOrderID string) error {
+	positions, err := e.positionRisk(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	for _, position := range positions {
+		if position.Symbol != symbol {
+			continue
+		}
+		amount, err := decimal.Parse(position.PositionAmt)
+		if err != nil || amount.IsZero() {
+			continue
+		}
+		filters, err := e.symbolFilters(ctx, symbol)
+		if err != nil {
+			return err
+		}
+		quantity, err := amount.Abs().FloorToStep(filters.StepSize)
+		if err != nil || quantity.IsZero() {
+			continue
+		}
+		side := "SELL"
+		if amount.Cmp(decimal.Zero()) < 0 {
+			side = "BUY"
+		}
+		if _, err := e.newOrder(ctx, url.Values{
+			"symbol":           {symbol},
+			"side":             {side},
+			"type":             {"MARKET"},
+			"quantity":         {quantity.String()},
+			"reduceOnly":       {"true"},
+			"newClientOrderId": {clientOrderID},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rollbackOpen best-effort undoes a partially-placed open after a stop-loss or
+// take-profit leg fails: cancel the stop-loss algo order (if it was placed),
+// cancel the resting entry order, and flatten any position the entry already
+// opened. Rollback errors are logged, not returned — the caller returns the
+// original placement failure so the user knows the open did not complete.
+func (e *Executor) rollbackOpen(ctx context.Context, symbol string, confirmationID string, stopPlaced bool) {
+	if stopPlaced {
+		if err := e.cancelAlgoOrder(ctx, clientOrderID(confirmationID, "sl")); err != nil {
+			e.logger.Warn("rollback: cancel stop loss failed", "symbol", symbol, "error", err)
+		}
+	}
+	if err := e.cancelOrder(ctx, symbol, clientOrderID(confirmationID, "entry")); err != nil {
+		e.logger.Warn("rollback: cancel entry failed", "symbol", symbol, "error", err)
+	}
+	if err := e.flattenPosition(ctx, symbol, clientOrderID(confirmationID, "rb")); err != nil {
+		e.logger.Warn("rollback: flatten position failed", "symbol", symbol, "error", err)
+	}
 }
 
 func (e *Executor) positionRisk(ctx context.Context, symbol string) ([]positionRisk, error) {
