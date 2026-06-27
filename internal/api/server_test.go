@@ -13,6 +13,7 @@ import (
 
 	"bottrade/internal/config"
 	"bottrade/internal/signals"
+	"bottrade/internal/users"
 )
 
 func TestTradingViewWebhookAcceptsSignal(t *testing.T) {
@@ -244,6 +245,57 @@ func TestWebhookBodyLimit(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413 for oversized body", resp.StatusCode)
+	}
+}
+
+func TestRegisterAndLogin(t *testing.T) {
+	userSvc, err := users.NewService(users.NewMemoryRepository())
+	if err != nil {
+		t.Fatalf("users.NewService: %v", err)
+	}
+	server := NewServer(testConfig(), nil, testLogger(), WithUsers(userSvc))
+
+	post := func(path, payload string) (int, []byte) {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := server.App().Test(req)
+		if err != nil {
+			t.Fatalf("Test %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, body
+	}
+
+	if status, _ := post("/api/register", `{"username":"alice","password":"supersecret"}`); status != http.StatusCreated {
+		t.Fatalf("register status = %d, want 201", status)
+	}
+	if status, _ := post("/api/register", `{"username":"alice","password":"supersecret"}`); status != http.StatusConflict {
+		t.Fatalf("duplicate register status = %d, want 409", status)
+	}
+	if status, body := post("/api/login", `{"username":"alice","password":"supersecret"}`); status != http.StatusOK {
+		t.Fatalf("login status = %d (%s), want 200", status, body)
+	}
+	if status, _ := post("/api/login", `{"username":"alice","password":"wrong"}`); status != http.StatusUnauthorized {
+		t.Fatalf("bad login status = %d, want 401", status)
+	}
+	// Response must never echo the password hash.
+	_, body := post("/api/login", `{"username":"alice","password":"supersecret"}`)
+	if bytes.Contains(body, []byte("password")) || bytes.Contains(body, []byte("hash")) {
+		t.Fatalf("login response leaked password material: %s", body)
+	}
+}
+
+func TestRegisterDisabledWithoutUserService(t *testing.T) {
+	server := NewServer(testConfig(), nil, testLogger())
+	req := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewBufferString(`{"username":"a","password":"b"}`))
+	resp, err := server.App().Test(req)
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501 when users disabled", resp.StatusCode)
 	}
 }
 

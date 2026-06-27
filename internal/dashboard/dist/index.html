@@ -10,24 +10,71 @@
       main { max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; }
       h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
       p { color: #666; margin-top: 0; }
-      .status { margin-top: 2rem; border: 1px solid #8883; border-radius: 0.75rem; padding: 1rem 1.25rem; }
+      .card { margin-top: 1.5rem; border: 1px solid #8883; border-radius: 0.75rem; padding: 1rem 1.25rem; }
       .row { display: flex; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid #8881; }
       .row:last-child { border-bottom: 0; }
       code { font-size: 0.85rem; }
+      label { display: block; font-size: 0.85rem; margin: 0.6rem 0 0.2rem; color: #888; }
+      input { width: 100%; box-sizing: border-box; padding: 0.5rem 0.6rem; border: 1px solid #8884; border-radius: 0.5rem; background: transparent; color: inherit; }
+      .actions { display: flex; gap: 0.5rem; margin-top: 0.9rem; }
+      button { flex: 1; padding: 0.55rem; border: 0; border-radius: 0.5rem; cursor: pointer; font-weight: 600; }
+      button.primary { background: #3b82f6; color: #fff; }
+      button.ghost { background: #8882; color: inherit; }
+      .msg { margin-top: 0.75rem; font-size: 0.85rem; min-height: 1.1rem; }
     </style>
   </head>
   <body>
     <main>
       <h1>Trading Bot Dashboard</h1>
-      <p>Embedded frontend placeholder — replace <code>internal/dashboard/dist</code> with the real build.</p>
-      <section class="status" id="status">Loading status…</section>
+      <p>Register an account to start trading. More traders → more trades → better statistics.</p>
+
+      <section class="card">
+        <strong id="auth-title">Register</strong>
+        <label for="username">Username</label>
+        <input id="username" autocomplete="username" />
+        <label for="password">Password (min 8 chars)</label>
+        <input id="password" type="password" autocomplete="current-password" />
+        <div class="actions">
+          <button class="primary" id="register">Register</button>
+          <button class="ghost" id="login">Log in</button>
+        </div>
+        <div class="msg" id="msg"></div>
+      </section>
+
+      <section class="card" id="status">Loading status…</section>
     </main>
     <script>
+      const msg = document.getElementById("msg");
+      function show(text, ok) {
+        msg.textContent = text;
+        msg.style.color = ok ? "#16a34a" : "#dc2626";
+      }
+      async function submit(path) {
+        const username = document.getElementById("username").value;
+        const password = document.getElementById("password").value;
+        try {
+          const r = await fetch(path, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (r.ok) {
+            show(`Welcome, ${d.username} (${d.role || "user"})`, true);
+          } else {
+            show(d.error || `Failed (${r.status})`, false);
+          }
+        } catch (e) {
+          show("Network error", false);
+        }
+      }
+      document.getElementById("register").onclick = () => submit("/api/register");
+      document.getElementById("login").onclick = () => submit("/api/login");
+
       fetch("/readyz")
         .then((r) => r.json())
         .then((d) => {
-          const el = document.getElementById("status");
-          el.innerHTML = Object.entries(d)
+          document.getElementById("status").innerHTML = Object.entries(d)
             .map(([k, v]) => `<div class="row"><span>${k}</span><strong>${v}</strong></div>`)
             .join("");
         })

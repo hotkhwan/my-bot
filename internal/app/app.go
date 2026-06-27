@@ -17,6 +17,7 @@ import (
 	"bottrade/internal/signals"
 	mongostore "bottrade/internal/storage/mongo"
 	"bottrade/internal/telegram"
+	"bottrade/internal/users"
 )
 
 type App struct {
@@ -190,7 +191,17 @@ func (a *App) RunAPI(ctx context.Context) error {
 	defer cleanup()
 
 	processor := a.newSignalProcessor(orderService, signalStore)
-	server := api.NewServer(a.cfg, processor, a.logger)
+
+	// Registration is backed by an in-memory store for now; a MongoDB-backed
+	// users.Repository (persistence across restarts) is the next slice.
+	opts := []api.Option{}
+	if userService, err := users.NewService(users.NewMemoryRepository()); err == nil {
+		opts = append(opts, api.WithUsers(userService))
+	} else {
+		a.logger.Warn("user service unavailable; registration disabled", "error", err)
+	}
+
+	server := api.NewServer(a.cfg, processor, a.logger, opts...)
 	return server.Run(ctx)
 }
 
