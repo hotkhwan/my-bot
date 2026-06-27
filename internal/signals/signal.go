@@ -44,6 +44,10 @@ type Decision struct {
 	ClosePercent      string         `json:"close_percent,omitempty"`
 	ConfidencePercent int            `json:"confidence_percent"`
 	Reason            string         `json:"reason"`
+	// Models lists the AI models that produced this decision. Empty for a single
+	// advisor; the ensemble fills it so the journal can attribute per-model
+	// performance. Not parsed from an advisor's JSON response.
+	Models []string `json:"models,omitempty"`
 }
 
 func (s MarketSignal) Sanitized() MarketSignal {

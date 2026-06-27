@@ -13,6 +13,7 @@ import (
 	"bottrade/internal/config"
 	"bottrade/internal/dashboard"
 	"bottrade/internal/signals"
+	"bottrade/internal/users"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/limiter"
@@ -36,11 +37,20 @@ const (
 type Server struct {
 	cfg       config.Config
 	processor *signals.Processor
+	users     *users.Service
 	logger    *slog.Logger
 	app       *fiber.App
 }
 
-func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Logger) *Server {
+// Option customises a Server without breaking existing call sites.
+type Option func(*Server)
+
+// WithUsers enables the registration/login endpoints backed by svc.
+func WithUsers(svc *users.Service) Option {
+	return func(s *Server) { s.users = svc }
+}
+
+func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Logger, opts ...Option) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -53,6 +63,9 @@ func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Log
 			AppName:   "tradebot",
 			BodyLimit: maxRequestBodyLimit,
 		}),
+	}
+	for _, opt := range opts {
+		opt(server)
 	}
 	server.routes()
 	return server
@@ -89,6 +102,16 @@ func (s *Server) routes() {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 	s.app.Get("/status", s.handleStatus)
+
+	// Account registration / login. Rate-limited because they are public and
+	// password-checking. Disabled (501) when no user service is wired.
+	authLimiter := limiter.New(limiter.Config{
+		Max:          webhookRatePerIP,
+		Expiration:   webhookRateWindow,
+		LimitReached: webhookRateLimited,
+	})
+	s.app.Post("/api/register", authLimiter, s.handleRegister)
+	s.app.Post("/api/login", authLimiter, s.handleLogin)
 
 	// Rate-limit the public webhook: it is the only internet-reachable path that
 	// can drive the signal/order flow, so cap brute-forcing of the secret and
@@ -149,6 +172,44 @@ func (s *Server) handleStatus(c fiber.Ctx) error {
 
 func webhookRateLimited(c fiber.Ctx) error {
 	return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "rate limit exceeded"})
+}
+
+type credentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (s *Server) handleRegister(c fiber.Ctx) error {
+	if s.users == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "registration is not enabled"})
+	}
+	var body credentials
+	if err := json.Unmarshal(c.Body(), &body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
+	}
+	user, err := s.users.Register(c.Context(), body.Username, body.Password)
+	if err != nil {
+		if errors.Is(err, users.ErrUsernameTaken) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "username already taken"})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"id": user.ID, "username": user.Username, "role": user.Role})
+}
+
+func (s *Server) handleLogin(c fiber.Ctx) error {
+	if s.users == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "login is not enabled"})
+	}
+	var body credentials
+	if err := json.Unmarshal(c.Body(), &body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
+	}
+	user, err := s.users.Authenticate(c.Context(), body.Username, body.Password)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid username or password"})
+	}
+	return c.JSON(fiber.Map{"id": user.ID, "username": user.Username, "role": user.Role})
 }
 
 func bearerToken(c fiber.Ctx) string {

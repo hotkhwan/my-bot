@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"bottrade/internal/audit"
+	"bottrade/internal/decimal"
 	"bottrade/internal/domain"
+	"bottrade/internal/journal"
 )
 
 type ConfirmationStatus string
@@ -51,10 +53,21 @@ type ExecutionResult struct {
 	Mode          string
 	ClientOrderID string
 	Message       string
+	// Set on a close: the symbol/side that was closed and the realized PnL, so
+	// the trade journal can record the round-trip outcome.
+	Symbol      string
+	Side        string
+	RealizedPnL decimal.Decimal
 }
 
 type Executor interface {
 	Execute(ctx context.Context, confirmation Confirmation) (ExecutionResult, error)
+}
+
+// TradeJournal records closed trades for win-rate / PnL statistics. Optional;
+// when nil the order flow runs without journaling.
+type TradeJournal interface {
+	Record(ctx context.Context, trade journal.Trade) error
 }
 
 type ConfirmationStore interface {
@@ -72,6 +85,7 @@ type Service struct {
 	intentStore   IntentStore
 	auditRecorder audit.Recorder
 	executor      Executor
+	journal       TradeJournal
 	logger        *slog.Logger
 }
 
@@ -79,6 +93,7 @@ type ServiceDependencies struct {
 	ConfirmationStore ConfirmationStore
 	IntentStore       IntentStore
 	AuditRecorder     audit.Recorder
+	Journal           TradeJournal
 }
 
 func NewService(dryRun bool, ttl time.Duration, logger *slog.Logger) *Service {
@@ -127,6 +142,7 @@ func NewServiceWithRepositories(ttl time.Duration, executor Executor, deps Servi
 		intentStore:   deps.IntentStore,
 		auditRecorder: deps.AuditRecorder,
 		executor:      executor,
+		journal:       deps.Journal,
 		logger:        logger,
 	}
 }
@@ -224,6 +240,12 @@ func (s *Service) Confirm(ctx context.Context, userID int64, id string) (Executi
 				"error":           err.Error(),
 			},
 		})
+		s.logger.Error("confirmation execution failed",
+			"confirmation_id", shortID(id),
+			"user_id", userID,
+			"intent_type", confirmation.Intent.Type,
+			"error", err.Error(),
+		)
 		return ExecutionResult{}, err
 	}
 
@@ -245,8 +267,41 @@ func (s *Service) Confirm(ctx context.Context, userID int64, id string) (Executi
 		},
 	})
 	s.logger.Info("confirmation executed", "confirmation_id", shortID(id), "user_id", userID, "intent_type", confirmation.Intent.Type)
+	s.recordClosedTrade(ctx, userID, confirmation, result)
 
 	return result, nil
+}
+
+// recordClosedTrade journals a completed round-trip when a close executes, using
+// the realized PnL the executor reported. Only closes are journaled, so each
+// resolved trade is counted once with its win/loss outcome. Best-effort: a
+// journal failure must not fail the trade that already executed.
+func (s *Service) recordClosedTrade(ctx context.Context, userID int64, confirmation Confirmation, result ExecutionResult) {
+	if s.journal == nil || confirmation.Intent.Type != domain.IntentClose {
+		return
+	}
+
+	outcome := journal.OutcomeBreakeven
+	switch {
+	case result.RealizedPnL.IsPositive():
+		outcome = journal.OutcomeWin
+	case result.RealizedPnL.Cmp(decimal.Zero()) < 0:
+		outcome = journal.OutcomeLoss
+	}
+
+	if err := s.journal.Record(ctx, journal.Trade{
+		ID:             confirmation.ID,
+		UserID:         userID,
+		ConfirmationID: confirmation.ID,
+		Symbol:         result.Symbol,
+		Side:           result.Side,
+		Mode:           result.Mode,
+		PnLUSDT:        result.RealizedPnL,
+		Outcome:        outcome,
+		ClosedAt:       s.clock(),
+	}); err != nil {
+		s.logger.Warn("journal record failed", "confirmation_id", shortID(confirmation.ID), "error", err)
+	}
 }
 
 func (s *Service) Cancel(ctx context.Context, userID int64, id string) error {

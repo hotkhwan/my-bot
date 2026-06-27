@@ -184,29 +184,37 @@ func (e *Executor) executeOpen(ctx context.Context, confirmation orders.Confirma
 		return orders.ExecutionResult{}, fmt.Errorf("place entry order: %w", err)
 	}
 
-	stopOrder, err := e.newOrder(ctx, url.Values{
-		"symbol":           {intent.Symbol},
-		"side":             {exitSide},
-		"type":             {"STOP_MARKET"},
-		"stopPrice":        {stopLoss.String()},
-		"closePosition":    {"true"},
-		"workingType":      {"MARK_PRICE"},
-		"newClientOrderId": {clientOrderID(confirmation.ID, "sl")},
+	// Conditional orders (STOP_MARKET / TAKE_PROFIT_MARKET) moved to the Algo
+	// Order endpoint on 2025-12-09; /fapi/v1/order now rejects them with -4120.
+	// Params differ from the classic endpoint: algoType, triggerPrice (not
+	// stopPrice), clientAlgoId (not newClientOrderId).
+	stopOrder, err := e.newAlgoOrder(ctx, url.Values{
+		"symbol":        {intent.Symbol},
+		"side":          {exitSide},
+		"algoType":      {"CONDITIONAL"},
+		"type":          {"STOP_MARKET"},
+		"triggerPrice":  {stopLoss.String()},
+		"closePosition": {"true"},
+		"workingType":   {"MARK_PRICE"},
+		"clientAlgoId":  {clientOrderID(confirmation.ID, "sl")},
 	})
 	if err != nil {
+		e.rollbackOpen(ctx, intent.Symbol, confirmation.ID, false)
 		return orders.ExecutionResult{}, fmt.Errorf("place stop loss order: %w", err)
 	}
 
-	takeProfitOrder, err := e.newOrder(ctx, url.Values{
-		"symbol":           {intent.Symbol},
-		"side":             {exitSide},
-		"type":             {"TAKE_PROFIT_MARKET"},
-		"stopPrice":        {takeProfit.String()},
-		"closePosition":    {"true"},
-		"workingType":      {"MARK_PRICE"},
-		"newClientOrderId": {clientOrderID(confirmation.ID, "tp")},
+	takeProfitOrder, err := e.newAlgoOrder(ctx, url.Values{
+		"symbol":        {intent.Symbol},
+		"side":          {exitSide},
+		"algoType":      {"CONDITIONAL"},
+		"type":          {"TAKE_PROFIT_MARKET"},
+		"triggerPrice":  {takeProfit.String()},
+		"closePosition": {"true"},
+		"workingType":   {"MARK_PRICE"},
+		"clientAlgoId":  {clientOrderID(confirmation.ID, "tp")},
 	})
 	if err != nil {
+		e.rollbackOpen(ctx, intent.Symbol, confirmation.ID, true)
 		return orders.ExecutionResult{}, fmt.Errorf("place take profit order: %w", err)
 	}
 
@@ -220,10 +228,10 @@ func (e *Executor) executeOpen(ctx context.Context, confirmation orders.Confirma
 			quantity.String(),
 			entryOrder.ClientOrderID,
 			entryOrder.OrderID,
-			stopOrder.ClientOrderID,
-			stopOrder.OrderID,
-			takeProfitOrder.ClientOrderID,
-			takeProfitOrder.OrderID,
+			stopOrder.ClientAlgoID,
+			stopOrder.AlgoID,
+			takeProfitOrder.ClientAlgoID,
+			takeProfitOrder.AlgoID,
 		),
 	}, nil
 }
@@ -240,6 +248,8 @@ func (e *Executor) executeClose(ctx context.Context, confirmation orders.Confirm
 	}
 
 	responses := make([]orderResponse, 0, len(positions))
+	realized := decimal.Zero()
+	var closedSymbol, closedSide string
 	for _, position := range positions {
 		if intent.Symbol != "" && position.Symbol != intent.Symbol {
 			continue
@@ -274,8 +284,14 @@ func (e *Executor) executeClose(ctx context.Context, confirmation orders.Confirm
 		}
 
 		side := "SELL"
+		closedSide = "long"
 		if amount.Cmp(decimal.Zero()) < 0 {
 			side = "BUY"
+			closedSide = "short"
+		}
+		closedSymbol = position.Symbol
+		if profit, perr := decimal.Parse(defaultDecimalString(position.UnrealizedProfit)); perr == nil {
+			realized = realized.Add(profit)
 		}
 
 		response, err := e.newOrder(ctx, url.Values{
@@ -304,6 +320,9 @@ func (e *Executor) executeClose(ctx context.Context, confirmation orders.Confirm
 	return orders.ExecutionResult{
 		Mode:          e.mode(),
 		ClientOrderID: responses[0].ClientOrderID,
+		Symbol:        closedSymbol,
+		Side:          closedSide,
+		RealizedPnL:   realized,
 		Message:       strings.ToUpper(e.mode()) + " close submitted.\n\n" + orders.Summary(confirmation.Intent) + "\n\nOrders:\n" + strings.Join(lines, "\n"),
 	}, nil
 }
@@ -435,6 +454,132 @@ func (e *Executor) newOrder(ctx context.Context, params url.Values) (orderRespon
 		return orderResponse{}, err
 	}
 	return response, nil
+}
+
+func (e *Executor) newAlgoOrder(ctx context.Context, params url.Values) (algoOrderResponse, error) {
+	var response algoOrderResponse
+	if err := e.signedRequest(ctx, http.MethodPost, "/fapi/v1/algoOrder", params, &response); err != nil {
+		return algoOrderResponse{}, err
+	}
+	return response, nil
+}
+
+func (e *Executor) cancelOrder(ctx context.Context, symbol string, clientOrderID string) error {
+	var response map[string]any
+	return e.signedRequest(ctx, http.MethodDelete, "/fapi/v1/order", url.Values{
+		"symbol":            {symbol},
+		"origClientOrderId": {clientOrderID},
+	}, &response)
+}
+
+// MoveStopLoss replaces the stop-loss for an open position: cancel the algo
+// order identified by oldClientAlgoID, then place a fresh STOP_MARKET at
+// newStop. The trailing-stop monitor calls this to ratchet protection in.
+// Binance forbids reusing a cancelled client order id, so the caller supplies a
+// new newClientAlgoID for each move.
+func (e *Executor) MoveStopLoss(ctx context.Context, symbol string, side domain.PositionSide, newStop decimal.Decimal, oldClientAlgoID string, newClientAlgoID string) error {
+	if err := e.validateConfig(); err != nil {
+		return err
+	}
+
+	filters, err := e.symbolFilters(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	stop, err := newStop.FloorToStep(filters.TickSize)
+	if err != nil {
+		return fmt.Errorf("round stop loss: %w", err)
+	}
+
+	exitSide := "SELL"
+	if side == domain.PositionSideShort {
+		exitSide = "BUY"
+	}
+
+	if err := e.cancelAlgoOrder(ctx, oldClientAlgoID); err != nil {
+		return fmt.Errorf("cancel previous stop loss: %w", err)
+	}
+	if _, err := e.newAlgoOrder(ctx, url.Values{
+		"symbol":        {symbol},
+		"side":          {exitSide},
+		"algoType":      {"CONDITIONAL"},
+		"type":          {"STOP_MARKET"},
+		"triggerPrice":  {stop.String()},
+		"closePosition": {"true"},
+		"workingType":   {"MARK_PRICE"},
+		"clientAlgoId":  {newClientAlgoID},
+	}); err != nil {
+		return fmt.Errorf("place new stop loss: %w", err)
+	}
+	return nil
+}
+
+func (e *Executor) cancelAlgoOrder(ctx context.Context, clientAlgoID string) error {
+	var response map[string]any
+	return e.signedRequest(ctx, http.MethodDelete, "/fapi/v1/algoOrder", url.Values{
+		"clientAlgoId": {clientAlgoID},
+	}, &response)
+}
+
+// flattenPosition closes any open position on the symbol with a reduce-only
+// market order. Used during open rollback so a filled entry is never left
+// without protection.
+func (e *Executor) flattenPosition(ctx context.Context, symbol string, clientOrderID string) error {
+	positions, err := e.positionRisk(ctx, symbol)
+	if err != nil {
+		return err
+	}
+	for _, position := range positions {
+		if position.Symbol != symbol {
+			continue
+		}
+		amount, err := decimal.Parse(position.PositionAmt)
+		if err != nil || amount.IsZero() {
+			continue
+		}
+		filters, err := e.symbolFilters(ctx, symbol)
+		if err != nil {
+			return err
+		}
+		quantity, err := amount.Abs().FloorToStep(filters.StepSize)
+		if err != nil || quantity.IsZero() {
+			continue
+		}
+		side := "SELL"
+		if amount.Cmp(decimal.Zero()) < 0 {
+			side = "BUY"
+		}
+		if _, err := e.newOrder(ctx, url.Values{
+			"symbol":           {symbol},
+			"side":             {side},
+			"type":             {"MARKET"},
+			"quantity":         {quantity.String()},
+			"reduceOnly":       {"true"},
+			"newClientOrderId": {clientOrderID},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rollbackOpen best-effort undoes a partially-placed open after a stop-loss or
+// take-profit leg fails: cancel the stop-loss algo order (if it was placed),
+// cancel the resting entry order, and flatten any position the entry already
+// opened. Rollback errors are logged, not returned — the caller returns the
+// original placement failure so the user knows the open did not complete.
+func (e *Executor) rollbackOpen(ctx context.Context, symbol string, confirmationID string, stopPlaced bool) {
+	if stopPlaced {
+		if err := e.cancelAlgoOrder(ctx, clientOrderID(confirmationID, "sl")); err != nil {
+			e.logger.Warn("rollback: cancel stop loss failed", "symbol", symbol, "error", err)
+		}
+	}
+	if err := e.cancelOrder(ctx, symbol, clientOrderID(confirmationID, "entry")); err != nil {
+		e.logger.Warn("rollback: cancel entry failed", "symbol", symbol, "error", err)
+	}
+	if err := e.flattenPosition(ctx, symbol, clientOrderID(confirmationID, "rb")); err != nil {
+		e.logger.Warn("rollback: flatten position failed", "symbol", symbol, "error", err)
+	}
 }
 
 func (e *Executor) positionRisk(ctx context.Context, symbol string) ([]positionRisk, error) {
@@ -631,6 +776,16 @@ type orderResponse struct {
 	Symbol        string `json:"symbol"`
 	Status        string `json:"status"`
 	Type          string `json:"type"`
+}
+
+// algoOrderResponse is the response shape of /fapi/v1/algoOrder, which uses
+// algoId/clientAlgoId/algoStatus rather than the classic order fields.
+type algoOrderResponse struct {
+	ClientAlgoID string `json:"clientAlgoId"`
+	AlgoID       int64  `json:"algoId"`
+	Symbol       string `json:"symbol"`
+	AlgoStatus   string `json:"algoStatus"`
+	Type         string `json:"type"`
 }
 
 type positionRisk struct {

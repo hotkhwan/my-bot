@@ -49,9 +49,9 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 		"GET /fapi/v1/exchangeInfo",
 		"POST /fapi/v1/marginType",
 		"POST /fapi/v1/leverage",
-		"POST /fapi/v1/order",
-		"POST /fapi/v1/order",
-		"POST /fapi/v1/order",
+		"POST /fapi/v1/order",     // entry (LIMIT) stays on the classic endpoint
+		"POST /fapi/v1/algoOrder", // stop loss (conditional)
+		"POST /fapi/v1/algoOrder", // take profit (conditional)
 	}
 	if len(requests) != len(wantPaths) {
 		t.Fatalf("requests = %v, want %v", requests, wantPaths)
@@ -71,13 +71,99 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 	}
 
 	stop := requests[4].Query
-	if stop.Get("type") != "STOP_MARKET" || stop.Get("closePosition") != "true" {
-		t.Fatalf("stop query = %s, want close-position stop", stop.Encode())
+	if stop.Get("algoType") != "CONDITIONAL" || stop.Get("type") != "STOP_MARKET" ||
+		stop.Get("closePosition") != "true" || stop.Get("triggerPrice") == "" {
+		t.Fatalf("stop query = %s, want conditional close-position STOP_MARKET with triggerPrice", stop.Encode())
+	}
+	if stop.Get("clientAlgoId") == "" || stop.Get("stopPrice") != "" {
+		t.Fatalf("stop query = %s, want clientAlgoId and no legacy stopPrice", stop.Encode())
 	}
 
 	takeProfit := requests[5].Query
-	if takeProfit.Get("type") != "TAKE_PROFIT_MARKET" || takeProfit.Get("closePosition") != "true" {
-		t.Fatalf("take-profit query = %s, want close-position take profit", takeProfit.Encode())
+	if takeProfit.Get("algoType") != "CONDITIONAL" || takeProfit.Get("type") != "TAKE_PROFIT_MARKET" ||
+		takeProfit.Get("closePosition") != "true" || takeProfit.Get("triggerPrice") == "" {
+		t.Fatalf("take-profit query = %s, want conditional close-position TAKE_PROFIT_MARKET with triggerPrice", takeProfit.Encode())
+	}
+}
+
+func TestExecutorOpenRollsBackWhenStopLossFails(t *testing.T) {
+	server := newBinanceTestServer(t)
+	server.failStopLoss = true
+	defer server.Close()
+
+	executor := NewExecutor(ExecutorConfig{
+		APIKey:               "key",
+		APISecret:            "secret",
+		BaseURL:              server.URL,
+		Testnet:              true,
+		RequestTimeout:       time.Second,
+		ExchangeInfoCacheTTL: time.Minute,
+	}, testLogger())
+	executor.now = func() time.Time { return time.UnixMilli(1710000000000) }
+
+	_, err := executor.Execute(context.Background(), testOpenConfirmation())
+	if err == nil {
+		t.Fatal("expected stop loss placement to fail")
+	}
+	if !strings.Contains(err.Error(), "stop loss") {
+		t.Fatalf("error = %v, want stop loss failure", err)
+	}
+
+	// The entry order was placed before the SL failed; rollback must cancel it
+	// so no unprotected order/position is left behind.
+	var canceledEntry, checkedPosition bool
+	for _, rq := range server.Requests() {
+		switch rq.MethodPath {
+		case "DELETE /fapi/v1/order":
+			canceledEntry = true
+		case "GET /fapi/v3/positionRisk":
+			checkedPosition = true
+		}
+	}
+	if !canceledEntry {
+		t.Fatal("rollback did not cancel the entry order")
+	}
+	if !checkedPosition {
+		t.Fatal("rollback did not check for an open position to flatten")
+	}
+}
+
+func TestExecutorMoveStopLoss(t *testing.T) {
+	server := newBinanceTestServer(t)
+	defer server.Close()
+
+	executor := NewExecutor(ExecutorConfig{
+		APIKey:               "key",
+		APISecret:            "secret",
+		BaseURL:              server.URL,
+		Testnet:              true,
+		RequestTimeout:       time.Second,
+		ExchangeInfoCacheTTL: time.Minute,
+	}, testLogger())
+	executor.now = func() time.Time { return time.UnixMilli(1710000000000) }
+
+	if err := executor.MoveStopLoss(context.Background(), "BTCUSDT", domain.PositionSideLong, decimal.MustParse("61234.56"), "tb_x_sl", "tb_x_sl2"); err != nil {
+		t.Fatalf("MoveStopLoss returned error: %v", err)
+	}
+
+	var canceled, placed url.Values
+	for _, rq := range server.Requests() {
+		switch rq.MethodPath {
+		case "DELETE /fapi/v1/algoOrder":
+			canceled = rq.Query
+		case "POST /fapi/v1/algoOrder":
+			placed = rq.Query
+		}
+	}
+	if canceled.Get("clientAlgoId") != "tb_x_sl" {
+		t.Fatalf("cancel = %s, want old client id tb_x_sl", canceled.Encode())
+	}
+	if placed.Get("type") != "STOP_MARKET" || placed.Get("algoType") != "CONDITIONAL" ||
+		placed.Get("side") != "SELL" || placed.Get("clientAlgoId") != "tb_x_sl2" {
+		t.Fatalf("new stop = %s, want SELL conditional STOP_MARKET with new id", placed.Encode())
+	}
+	if placed.Get("triggerPrice") != "61234.5" { // floored to the 0.10 tick size
+		t.Fatalf("triggerPrice = %q, want 61234.5 (floored to tick)", placed.Get("triggerPrice"))
 	}
 }
 
@@ -102,6 +188,10 @@ func TestExecutorClosePlacesReduceOnlyMarketOrder(t *testing.T) {
 
 	if !strings.Contains(result.Message, "close submitted") {
 		t.Fatalf("Message = %q, want close summary", result.Message)
+	}
+	// The close result must carry the realized PnL / symbol / side for the journal.
+	if result.Symbol != "BTCUSDT" || result.Side != "long" || result.RealizedPnL.String() != "5.5" {
+		t.Fatalf("close result = {sym:%q side:%q pnl:%s}, want BTCUSDT long 5.5", result.Symbol, result.Side, result.RealizedPnL.String())
 	}
 
 	requests := server.Requests()
@@ -173,9 +263,10 @@ func TestExecutorRefusesNonTestnetWhenRealTradingDisabled(t *testing.T) {
 
 type binanceTestServer struct {
 	*httptest.Server
-	mu       sync.Mutex
-	requests []recordedRequest
-	orderID  int64
+	mu           sync.Mutex
+	requests     []recordedRequest
+	orderID      int64
+	failStopLoss bool // when true, the STOP_MARKET algo order is rejected
 }
 
 type recordedRequest struct {
@@ -210,12 +301,34 @@ func newBinanceTestServer(t *testing.T) *binanceTestServer {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"leverage":3,"symbol":"BTCUSDT"}`))
 		case "/fapi/v1/order":
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"clientOrderId":"` + r.URL.Query().Get("origClientOrderId") + `","orderId":1,"symbol":"BTCUSDT","status":"CANCELED"}`))
+				return
+			}
 			server.mu.Lock()
 			server.orderID++
 			orderID := server.orderID
 			server.mu.Unlock()
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"clientOrderId":"` + r.URL.Query().Get("newClientOrderId") + `","orderId":` + strconvInt64(orderID) + `,"symbol":"BTCUSDT","status":"NEW","type":"` + r.URL.Query().Get("type") + `"}`))
+		case "/fapi/v1/algoOrder":
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"algoId":1,"clientAlgoId":"` + r.URL.Query().Get("clientAlgoId") + `","code":"200","msg":"success"}`))
+				return
+			}
+			if server.failStopLoss && r.URL.Query().Get("type") == "STOP_MARKET" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":-2021,"msg":"Order would immediately trigger."}`))
+				return
+			}
+			server.mu.Lock()
+			server.orderID++
+			algoID := server.orderID
+			server.mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"clientAlgoId":"` + r.URL.Query().Get("clientAlgoId") + `","algoId":` + strconvInt64(algoID) + `,"symbol":"BTCUSDT","algoStatus":"NEW","type":"` + r.URL.Query().Get("type") + `"}`))
 		case "/fapi/v3/positionRisk":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionAmt":"0.010","entryPrice":"67500.0","markPrice":"68000.50","unRealizedProfit":"5.50","leverage":"3","marginType":"isolated","positionSide":"BOTH"},{"symbol":"ETHUSDT","positionAmt":"0","entryPrice":"0","markPrice":"0","unRealizedProfit":"0","leverage":"2","marginType":"isolated","positionSide":"BOTH"}]`))

@@ -22,6 +22,8 @@ type Store struct {
 	orderIntents  *mongodriver.Collection
 	signals       *mongodriver.Collection
 	auditEvents   *mongodriver.Collection
+	users         *mongodriver.Collection
+	journalTrades *mongodriver.Collection
 }
 
 func Connect(ctx context.Context, cfg Config) (*Store, error) {
@@ -51,6 +53,8 @@ func Connect(ctx context.Context, cfg Config) (*Store, error) {
 		orderIntents:  db.Collection("order_intents"),
 		signals:       db.Collection("signals"),
 		auditEvents:   db.Collection("audit_events"),
+		users:         db.Collection("users"),
+		journalTrades: db.Collection("journal_trades"),
 	}
 	if err := store.ensureIndexes(ctx); err != nil {
 		_ = client.Disconnect(ctx)
@@ -162,6 +166,31 @@ func (s *Store) ensureIndexes(ctx context.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("create audit indexes: %w", err)
+	}
+
+	_, err = s.users.Indexes().CreateOne(ctx, mongodriver.IndexModel{
+		Keys:    bson.D{{Key: "username", Value: 1}},
+		Options: options.Index().SetName("username_unique").SetUnique(true),
+	})
+	if err != nil {
+		return fmt.Errorf("create user indexes: %w", err)
+	}
+
+	_, err = s.journalTrades.Indexes().CreateMany(ctx, []mongodriver.IndexModel{
+		{
+			Keys: bson.D{
+				{Key: "user_id", Value: 1},
+				{Key: "closed_at", Value: -1},
+			},
+			Options: options.Index().SetName("journal_user_closed_at"),
+		},
+		{
+			Keys:    bson.D{{Key: "campaign_id", Value: 1}},
+			Options: options.Index().SetName("journal_campaign").SetSparse(true),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create journal indexes: %w", err)
 	}
 
 	return nil

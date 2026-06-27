@@ -11,12 +11,14 @@ import (
 	"bottrade/internal/api"
 	"bottrade/internal/config"
 	binanceexec "bottrade/internal/exchange/binance"
+	"bottrade/internal/journal"
 	"bottrade/internal/logging"
 	"bottrade/internal/orders"
 	"bottrade/internal/plans"
 	"bottrade/internal/signals"
 	mongostore "bottrade/internal/storage/mongo"
 	"bottrade/internal/telegram"
+	"bottrade/internal/users"
 )
 
 type App struct {
@@ -97,7 +99,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 2)
 	if a.cfg.HTTP.Enabled {
-		server := api.NewServer(a.cfg, signalProcessor, a.logger)
+		server := api.NewServer(a.cfg, signalProcessor, a.logger, a.userOptions(signalStore)...)
 		go func() {
 			if err := server.Run(ctx); err != nil {
 				errCh <- err
@@ -190,8 +192,25 @@ func (a *App) RunAPI(ctx context.Context) error {
 	defer cleanup()
 
 	processor := a.newSignalProcessor(orderService, signalStore)
-	server := api.NewServer(a.cfg, processor, a.logger)
+
+	server := api.NewServer(a.cfg, processor, a.logger, a.userOptions(signalStore)...)
 	return server.Run(ctx)
+}
+
+// userOptions wires the registration/login service. It persists to MongoDB when
+// the trading store is MongoDB-backed (accounts survive restarts), and falls
+// back to an in-memory store otherwise.
+func (a *App) userOptions(signalStore signals.SignalStore) []api.Option {
+	var repo users.Repository = users.NewMemoryRepository()
+	if store, ok := signalStore.(*mongostore.Store); ok {
+		repo = store.Users()
+	}
+	service, err := users.NewService(repo)
+	if err != nil {
+		a.logger.Warn("user service unavailable; registration disabled", "error", err)
+		return nil
+	}
+	return []api.Option{api.WithUsers(service)}
 }
 
 func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.StatusService, *plans.Service, signals.SignalStore, func(), error) {
@@ -230,10 +249,15 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 		positionProvider = binanceExecutor
 	}
 
+	var tradeJournal orders.TradeJournal
+	if journalService, err := journal.NewService(store.Journal()); err == nil {
+		tradeJournal = journalService
+	}
 	orderService := orders.NewServiceWithRepositories(a.cfg.App.ConfirmationTTL, executor, orders.ServiceDependencies{
 		ConfirmationStore: store,
 		IntentStore:       store,
 		AuditRecorder:     store,
+		Journal:           tradeJournal,
 	}, a.logger)
 	statusService := orders.NewStatusService(positionProvider)
 	planService := plans.NewService(store)
