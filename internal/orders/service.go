@@ -224,6 +224,12 @@ func (s *Service) Confirm(ctx context.Context, userID int64, id string) (Executi
 				"error":           err.Error(),
 			},
 		})
+		s.logger.Error("confirmation execution failed",
+			"confirmation_id", shortID(id),
+			"user_id", userID,
+			"intent_type", confirmation.Intent.Type,
+			"error", err.Error(),
+		)
 		return ExecutionResult{}, err
 	}
 
