@@ -112,6 +112,7 @@ func (a *App) Run(ctx context.Context) error {
 		if broadcaster != nil {
 			opts = append(opts, api.WithRealtime(broadcaster))
 		}
+		opts = append(opts, api.WithOrders(orderService))
 		server := api.NewServer(a.cfg, signalProcessor, a.logger, opts...)
 		go func() {
 			if err := server.Run(ctx); err != nil {
@@ -294,6 +295,7 @@ func (a *App) RunAPI(ctx context.Context) error {
 	if broadcaster != nil {
 		opts = append(opts, api.WithRealtime(broadcaster))
 	}
+	opts = append(opts, api.WithOrders(orderService))
 	server := api.NewServer(a.cfg, processor, a.logger, opts...)
 	return server.Run(ctx)
 }

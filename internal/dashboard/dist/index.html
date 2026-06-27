@@ -85,6 +85,10 @@
           <button class="primary" id="cmd-run" style="flex:0 0 auto;width:5rem">Run</button>
         </div>
         <pre id="cmd-out" class="output"></pre>
+        <div id="cmd-confirm" class="actions" style="display:none">
+          <button class="primary" id="cmd-yes">Confirm</button>
+          <button class="ghost" id="cmd-no">Cancel</button>
+        </div>
       </section>
 
       <section class="card">
@@ -162,8 +166,13 @@
       // against /api/command with the session JWT.
       const cmdInput = document.getElementById("cmd");
       const cmdOut = document.getElementById("cmd-out");
+      const cmdConfirm = document.getElementById("cmd-confirm");
+      let pendingConfirmId = null;
+
       async function runCommand(command) {
         if (!command.trim()) return;
+        cmdConfirm.style.display = "none";
+        pendingConfirmId = null;
         cmdOut.textContent = "…";
         try {
           const r = await fetch("/api/command", {
@@ -173,10 +182,34 @@
           });
           const d = await r.json().catch(() => ({}));
           cmdOut.textContent = d.output || d.error || `Failed (${r.status})`;
+          if (d.confirm_id) {
+            pendingConfirmId = d.confirm_id;
+            cmdConfirm.style.display = "";
+          }
         } catch (e) {
           cmdOut.textContent = "Network error";
         }
       }
+      async function resolveConfirm(cancel) {
+        if (!pendingConfirmId) return;
+        const id = pendingConfirmId;
+        pendingConfirmId = null;
+        cmdConfirm.style.display = "none";
+        cmdOut.textContent = cancel ? "Cancelling…" : "Placing…";
+        try {
+          const r = await fetch("/api/confirm", {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ id, cancel }),
+          });
+          const d = await r.json().catch(() => ({}));
+          cmdOut.textContent = d.output || d.error || `Failed (${r.status})`;
+        } catch (e) {
+          cmdOut.textContent = "Network error";
+        }
+      }
+      document.getElementById("cmd-yes").onclick = () => resolveConfirm(false);
+      document.getElementById("cmd-no").onclick = () => resolveConfirm(true);
       document.getElementById("cmd-run").onclick = () => runCommand(cmdInput.value);
       cmdInput.addEventListener("keydown", (e) => { if (e.key === "Enter") runCommand(cmdInput.value); });
       document.querySelectorAll(".chip").forEach((chip) => {

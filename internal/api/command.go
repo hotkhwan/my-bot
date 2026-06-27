@@ -11,6 +11,7 @@ import (
 	"bottrade/internal/campaign"
 	"bottrade/internal/journal"
 	"bottrade/internal/marketdata"
+	"bottrade/internal/orders"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -44,8 +45,85 @@ func (s *Server) handleCommand(c fiber.Ctx) error {
 	case "report":
 		return c.JSON(fiber.Map{"output": s.commandReport(c)})
 	default:
+		return s.commandTrade(c, text)
+	}
+}
+
+// commandTrade parses a trade command and prepares it, returning a confirm_id
+// the dashboard turns into a Confirm button. Placement happens in handleConfirm.
+// Same order service, same testnet/dry-run gates as the bot.
+func (s *Server) commandTrade(c fiber.Ctx, text string) error {
+	if s.orders == nil {
+		return c.JSON(fiber.Map{"output": "Trading from the web is not enabled — use the Telegram bot."})
+	}
+	intent, err := s.parser.Parse(text)
+	if err != nil {
 		return c.JSON(fiber.Map{"output": "Unknown command. Type help.\n\n" + webCommandHelp})
 	}
+	if !intent.IsExchangeChanging() {
+		return c.JSON(fiber.Map{"output": "That command isn't available on the web yet — try it in Telegram."})
+	}
+	userID, ok := webUserID(c)
+	if !ok {
+		return c.JSON(fiber.Map{"output": "Trading needs a Telegram login (the key is tied to your Telegram account)."})
+	}
+	confirmation, err := s.orders.Prepare(c.Context(), userID, intent)
+	if err != nil {
+		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"output":     "Review this action:\n\n" + orders.Summary(intent),
+		"confirm_id": confirmation.ID,
+	})
+}
+
+// handleConfirm executes (or cancels) a prepared confirmation from the web.
+func (s *Server) handleConfirm(c fiber.Ctx) error {
+	if s.orders == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "trading is not enabled"})
+	}
+	var body struct {
+		ID     string `json:"id"`
+		Cancel bool   `json:"cancel"`
+	}
+	if err := json.Unmarshal(c.Body(), &body); err != nil || strings.TrimSpace(body.ID) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing confirmation id"})
+	}
+	userID, ok := webUserID(c)
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "telegram login required"})
+	}
+
+	if body.Cancel {
+		if err := s.orders.Cancel(c.Context(), userID, body.ID); err != nil {
+			return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
+		}
+		return c.JSON(fiber.Map{"output": "Cancelled."})
+	}
+
+	result, err := s.orders.Confirm(c.Context(), userID, body.ID)
+	if err != nil {
+		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
+	}
+	out := result.Message
+	if strings.TrimSpace(out) == "" {
+		out = "✅ " + result.Mode + " " + result.ClientOrderID
+	}
+	return c.JSON(fiber.Map{"output": out})
+}
+
+// webUserID extracts the numeric Telegram id from a "tg:<id>" JWT subject.
+func webUserID(c fiber.Ctx) (int64, bool) {
+	subject := claimsOf(c).Subject
+	id := strings.TrimPrefix(subject, "tg:")
+	if id == subject {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 const webCommandHelp = `Web console commands:
@@ -53,9 +131,13 @@ const webCommandHelp = `Web console commands:
   goal profit 10 risk 50    preview a profit plan (simulation, no real orders)
   backtest BTC          backtest EMA-cross / RSI on history
   report                your win-rate / PnL
-  help                  this list
 
-Trading and autonomous campaigns run from the Telegram bot for now.`
+  Trade (needs a Telegram login + stored key; you'll Confirm before it places):
+  long BTC 3x entry 67500 sl 65000 tp 72000 size 100usdt
+  close BTC
+  close all
+
+Autonomous campaigns run from the Telegram bot for now.`
 
 func (s *Server) commandMarket(c fiber.Ctx, arg string) string {
 	symbol := normalizeSymbol(arg)
