@@ -65,6 +65,7 @@ type AppConfig struct {
 
 type TelegramConfig struct {
 	BotToken          string
+	BotUsername       string // @username (without @), used by the web Login Widget
 	AdminUserID       int64
 	AllowedUserIDs    []int64
 	Mode              string
@@ -217,6 +218,7 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.App.RealtimePollSeconds = reader.int("REALTIME_POLL_SECONDS", cfg.App.RealtimePollSeconds)
 
 	cfg.Telegram.BotToken = reader.string("TELEGRAM_BOT_TOKEN", cfg.Telegram.BotToken)
+	cfg.Telegram.BotUsername = strings.TrimPrefix(reader.string("TELEGRAM_BOT_USERNAME", cfg.Telegram.BotUsername), "@")
 	cfg.Telegram.AdminUserID = reader.userID("TELEGRAM_ADMIN_USER_ID")
 	if cfg.Telegram.AdminUserID == 0 {
 		cfg.Telegram.AdminUserID = reader.userID("TELEGRAM_ALLOWED_USER_ID")

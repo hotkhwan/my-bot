@@ -151,6 +151,8 @@ func (s *Server) routes() {
 	s.app.Post("/api/register", authLimiter, s.handleRegister)
 	s.app.Post("/api/login", authLimiter, s.handleLogin)
 	s.app.Post("/api/telegram-auth", authLimiter, s.handleTelegramAuth)
+	s.app.Post("/api/telegram-login", authLimiter, s.handleTelegramLogin)
+	s.app.Get("/api/auth-config", s.handleAuthConfig)
 	s.app.Get("/api/report", s.handleReport)
 	s.app.Post("/api/credentials", s.requireAuth, s.handleStoreCredential)
 	s.app.Get("/api/credentials", s.requireAuth, s.handleGetCredential)
@@ -400,6 +402,40 @@ func (s *Server) handleTelegramAuth(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
 	}
 	user, err := auth.VerifyTelegramInitData(body.InitData, s.cfg.Telegram.BotToken, 24*time.Hour, time.Now())
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid telegram login"})
+	}
+	username := user.Username
+	if username == "" {
+		username = user.FirstName
+	}
+	return c.JSON(s.loginResponse("tg:"+strconv.FormatInt(user.ID, 10), username, "user"))
+}
+
+// handleAuthConfig exposes the non-secret config the dashboard needs to render
+// the Telegram Login Widget. The bot username and the enabled flag are public.
+func (s *Server) handleAuthConfig(c fiber.Ctx) error {
+	return c.JSON(fiber.Map{
+		"telegram_bot_username": s.cfg.Telegram.BotUsername,
+		"telegram_login_enabled": s.tokenizer != nil &&
+			strings.TrimSpace(s.cfg.Telegram.BotUsername) != "" &&
+			strings.TrimSpace(s.cfg.Telegram.BotToken) != "",
+	})
+}
+
+// handleTelegramLogin verifies the data from the website Telegram Login Widget
+// and issues a session token. Identity is "tg:<telegram id>" — the same key used
+// by the bot, per-user credentials, and the journal, so web and bot converge on
+// one account.
+func (s *Server) handleTelegramLogin(c fiber.Ctx) error {
+	if s.tokenizer == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "auth is not enabled"})
+	}
+	var fields map[string]string
+	if err := json.Unmarshal(c.Body(), &fields); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
+	}
+	user, err := auth.VerifyTelegramLoginWidget(fields, s.cfg.Telegram.BotToken, 24*time.Hour, time.Now())
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid telegram login"})
 	}

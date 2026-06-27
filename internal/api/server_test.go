@@ -3,14 +3,19 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"bottrade/internal/auth"
 	"bottrade/internal/config"
@@ -226,6 +231,79 @@ func TestStatusRequiresBearerToken(t *testing.T) {
 				t.Fatalf("authorized /status missing flags: %s", body)
 			}
 		})
+	}
+}
+
+func signLoginWidget(botToken string, fields map[string]string) map[string]string {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, k+"="+fields[k])
+	}
+	secret := sha256.Sum256([]byte(botToken))
+	mac := hmac.New(sha256.New, secret[:])
+	mac.Write([]byte(strings.Join(pairs, "\n")))
+	out := map[string]string{"hash": hex.EncodeToString(mac.Sum(nil))}
+	for k, v := range fields {
+		out[k] = v
+	}
+	return out
+}
+
+func TestAuthConfigAndTelegramLogin(t *testing.T) {
+	tk, err := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
+	if err != nil {
+		t.Fatalf("NewTokenizer: %v", err)
+	}
+	cfg := testConfigWith(t, map[string]string{"TELEGRAM_BOT_USERNAME": "@mytradebot"})
+	server := NewServer(cfg, nil, testLogger(), WithTokenizer(tk))
+
+	// auth-config exposes the (leading @ stripped) username and enabled flag.
+	resp, err := server.App().Test(httptest.NewRequest(http.MethodGet, "/api/auth-config", nil))
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	var ac struct {
+		Username string `json:"telegram_bot_username"`
+		Enabled  bool   `json:"telegram_login_enabled"`
+	}
+	json.NewDecoder(resp.Body).Decode(&ac)
+	resp.Body.Close()
+	if ac.Username != "mytradebot" || !ac.Enabled {
+		t.Fatalf("auth-config = %+v, want mytradebot/enabled", ac)
+	}
+
+	post := func(fields map[string]string) (int, map[string]any) {
+		payload, _ := json.Marshal(fields)
+		req := httptest.NewRequest(http.MethodPost, "/api/telegram-login", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		r, err := server.App().Test(req)
+		if err != nil {
+			t.Fatalf("Test: %v", err)
+		}
+		defer r.Body.Close()
+		var out map[string]any
+		json.NewDecoder(r.Body).Decode(&out)
+		return r.StatusCode, out
+	}
+
+	// Valid signature → token, identity tg:42.
+	valid := signLoginWidget("123:abc", map[string]string{
+		"id": "42", "username": "bob", "auth_date": fmt.Sprint(time.Now().Unix()),
+	})
+	code, out := post(valid)
+	if code != http.StatusOK || out["token"] == nil || out["id"] != "tg:42" {
+		t.Fatalf("valid login = %d %+v, want 200 with token and tg:42", code, out)
+	}
+
+	// Tampered field → 401.
+	valid["id"] = "99"
+	if code, _ := post(valid); code != http.StatusUnauthorized {
+		t.Fatalf("tampered login = %d, want 401", code)
 	}
 }
 

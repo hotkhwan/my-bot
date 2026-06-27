@@ -28,17 +28,28 @@
       <h1>Trading Bot Dashboard</h1>
       <p>Register an account to start trading. More traders → more trades → better statistics.</p>
 
-      <section class="card">
-        <strong id="auth-title">Register</strong>
-        <label for="username">Username</label>
-        <input id="username" autocomplete="username" />
-        <label for="password">Password (min 8 chars)</label>
-        <input id="password" type="password" autocomplete="current-password" />
-        <div class="actions">
-          <button class="primary" id="register">Register</button>
-          <button class="ghost" id="login">Log in</button>
+      <section class="card" id="authCard">
+        <div id="tgLogin" style="display:none">
+          <strong>Log in with Telegram</strong>
+          <p style="margin:0.3rem 0 0.6rem">One click — uses the same account as the bot, so your keys, positions, and stats are shared.</p>
+          <div id="tgWidget"></div>
+          <div class="msg" id="tgMsg"></div>
+          <details style="margin-top:0.8rem"><summary style="cursor:pointer;color:#888;font-size:0.85rem">Or use a username &amp; password</summary>
+            <div id="pwBox"></div>
+          </details>
         </div>
-        <div class="msg" id="msg"></div>
+        <div id="pwForm">
+          <strong id="auth-title">Register</strong>
+          <label for="username">Username</label>
+          <input id="username" autocomplete="username" />
+          <label for="password">Password (min 8 chars)</label>
+          <input id="password" type="password" autocomplete="current-password" />
+          <div class="actions">
+            <button class="primary" id="register">Register</button>
+            <button class="ghost" id="login">Log in</button>
+          </div>
+          <div class="msg" id="msg"></div>
+        </div>
       </section>
 
       <section class="card" id="keysCard" style="display:none">
@@ -125,9 +136,53 @@
         } catch (e) {}
       }
       function onAuthed() {
+        document.getElementById("authCard").style.display = "none";
         document.getElementById("keysCard").style.display = "";
         refreshKeyStatus();
       }
+
+      // Telegram Login Widget — the primary, one-click path. The widget invokes
+      // window.onTelegramAuth with the signed user object; the server verifies
+      // the Telegram signature and returns a JWT for identity "tg:<id>", the same
+      // identity the bot uses, so web and bot share one account.
+      window.onTelegramAuth = async (user) => {
+        const tgMsg = document.getElementById("tgMsg");
+        try {
+          const r = await fetch("/api/telegram-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(user),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (r.ok && d.token) {
+            localStorage.setItem("token", d.token);
+            onAuthed();
+          } else {
+            tgMsg.textContent = d.error || `Login failed (${r.status})`;
+            tgMsg.style.color = "#dc2626";
+          }
+        } catch (e) {
+          tgMsg.textContent = "Network error";
+          tgMsg.style.color = "#dc2626";
+        }
+      };
+      fetch("/api/auth-config")
+        .then((r) => r.json())
+        .then((cfg) => {
+          if (!cfg.telegram_login_enabled || !cfg.telegram_bot_username) return;
+          // Telegram available → make it primary, demote the password form.
+          document.getElementById("pwBox").appendChild(document.getElementById("pwForm"));
+          document.getElementById("tgLogin").style.display = "";
+          const s = document.createElement("script");
+          s.async = true;
+          s.src = "https://telegram.org/js/telegram-widget.js?22";
+          s.setAttribute("data-telegram-login", cfg.telegram_bot_username);
+          s.setAttribute("data-size", "large");
+          s.setAttribute("data-onauth", "onTelegramAuth(user)");
+          s.setAttribute("data-request-access", "write");
+          document.getElementById("tgWidget").appendChild(s);
+        })
+        .catch(() => {});
       document.getElementById("saveKey").onclick = async () => {
         const body = JSON.stringify({
           api_key: document.getElementById("apiKey").value,

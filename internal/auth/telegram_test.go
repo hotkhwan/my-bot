@@ -34,6 +34,74 @@ func signInitData(botToken string, fields map[string]string) string {
 	return q.Encode()
 }
 
+// signLoginWidget builds a valid Login Widget field set (SHA256-secret scheme).
+func signLoginWidget(botToken string, fields map[string]string) map[string]string {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, k+"="+fields[k])
+	}
+	secret := sha256.Sum256([]byte(botToken))
+	hash := hex.EncodeToString(hmacSum(secret[:], []byte(strings.Join(pairs, "\n"))))
+
+	out := make(map[string]string, len(fields)+1)
+	for k, v := range fields {
+		out[k] = v
+	}
+	out["hash"] = hash
+	return out
+}
+
+func TestVerifyTelegramLoginWidget(t *testing.T) {
+	const token = "123456:bot-token"
+	now := time.Unix(1_700_000_100, 0)
+	fields := signLoginWidget(token, map[string]string{
+		"id":         "987654321",
+		"username":   "alice",
+		"first_name": "Alice",
+		"auth_date":  "1700000050",
+	})
+
+	user, err := VerifyTelegramLoginWidget(fields, token, time.Hour, now)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if user.ID != 987654321 || user.Username != "alice" || user.FirstName != "Alice" {
+		t.Fatalf("user = %+v", user)
+	}
+}
+
+func TestVerifyTelegramLoginWidgetRejectsTamperAndStale(t *testing.T) {
+	const token = "123456:bot-token"
+	now := time.Unix(1_700_000_100, 0)
+	fields := signLoginWidget(token, map[string]string{"id": "1", "auth_date": "1700000050"})
+
+	// Tampered id invalidates the hash.
+	tampered := map[string]string{}
+	for k, v := range fields {
+		tampered[k] = v
+	}
+	tampered["id"] = "2"
+	if _, err := VerifyTelegramLoginWidget(tampered, token, time.Hour, now); !errors.Is(err, ErrTelegramAuth) {
+		t.Fatalf("tamper err = %v, want ErrTelegramAuth", err)
+	}
+
+	// Stale auth_date is rejected.
+	stale := signLoginWidget(token, map[string]string{"id": "1", "auth_date": "1700000050"})
+	if _, err := VerifyTelegramLoginWidget(stale, token, 10*time.Second, now); !errors.Is(err, ErrTelegramAuth) {
+		t.Fatalf("stale err = %v, want ErrTelegramAuth", err)
+	}
+
+	// Wrong bot token fails.
+	if _, err := VerifyTelegramLoginWidget(fields, "999:other", time.Hour, now); !errors.Is(err, ErrTelegramAuth) {
+		t.Fatalf("wrong-token err = %v, want ErrTelegramAuth", err)
+	}
+}
+
 func TestVerifyTelegramInitData(t *testing.T) {
 	const token = "123456:bot-token"
 	now := time.Unix(1_700_000_100, 0)
