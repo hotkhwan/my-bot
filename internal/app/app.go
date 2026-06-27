@@ -320,11 +320,15 @@ func (a *App) buildEnricher() ai.ContextEnricher {
 		return nil
 	}
 	provider := marketdata.NewBinanceProvider(a.cfg.AI.MarketDataBaseURL, nil)
-	orderFlow := ai.NewOrderFlowProvider(provider, a.cfg.AI.MarketDataPeriod)
+	contextProviders := []ai.ContextProvider{
+		ai.NewOrderFlowProvider(provider, a.cfg.AI.MarketDataPeriod),
+		ai.NewIndicatorProvider(provider, a.cfg.AI.KlineInterval, 0),
+	}
 	a.logger.Info("market-data enrichment enabled",
-		"source", "binance_orderflow", "base_url", a.cfg.AI.MarketDataBaseURL, "period", a.cfg.AI.MarketDataPeriod)
+		"sources", "binance_orderflow+binance_ta", "base_url", a.cfg.AI.MarketDataBaseURL,
+		"period", a.cfg.AI.MarketDataPeriod, "kline_interval", a.cfg.AI.KlineInterval)
 	return ai.NewAggregator(ai.AggregatorConfig{
-		Providers: []ai.ContextProvider{orderFlow},
+		Providers: contextProviders,
 		Logger:    a.logger,
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,6 +126,45 @@ func (p *BinanceProvider) TakerFlow(ctx context.Context, symbol, period string) 
 		SellVolume:   parseOrZero(row.SellVol),
 		At:           msToTime(row.Timestamp),
 	}, nil
+}
+
+// Closes returns the closing prices of the most recent `limit` klines for a
+// symbol/interval, oldest first. The values are float64 because they feed
+// advisory technical indicators (EMA/RSI/MACD), never order sizing. interval is
+// a Binance kline interval ("1m","5m","15m","1h","4h","1d", ...).
+func (p *BinanceProvider) Closes(ctx context.Context, symbol, interval string, limit int) ([]float64, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	params := url.Values{
+		"symbol":   {symbol},
+		"interval": {interval},
+		"limit":    {strconv.Itoa(limit)},
+	}
+	var rows [][]any
+	if err := p.get(ctx, "/fapi/v1/klines", params, &rows); err != nil {
+		return nil, err
+	}
+	closes := make([]float64, 0, len(rows))
+	for _, row := range rows {
+		if len(row) < 5 {
+			continue
+		}
+		// Kline close is index 4, encoded as a JSON string.
+		text, ok := row[4].(string)
+		if !ok {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+		if err != nil {
+			return nil, fmt.Errorf("marketdata: parse kline close %q: %w", text, err)
+		}
+		closes = append(closes, value)
+	}
+	if len(closes) == 0 {
+		return nil, fmt.Errorf("marketdata: no klines for %s %s", symbol, interval)
+	}
+	return closes, nil
 }
 
 func (p *BinanceProvider) get(ctx context.Context, path string, params url.Values, out any) error {

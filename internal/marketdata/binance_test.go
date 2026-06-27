@@ -28,6 +28,10 @@ func newStubBinance(t *testing.T) *BinanceProvider {
 	mux.HandleFunc("/futures/data/takerlongshortRatio", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[{"buySellRatio":"1.2","buyVol":"1000","sellVol":"833","timestamp":1699999000000}]`))
 	})
+	mux.HandleFunc("/fapi/v1/klines", func(w http.ResponseWriter, _ *http.Request) {
+		// [openTime, open, high, low, close, volume, ...]
+		_, _ = w.Write([]byte(`[[1,"10","11","9","10.5","100",2],[2,"10.5","12","10","11.0","120",3],[3,"11","13","10","12.25","150",4]]`))
+	})
 
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -87,6 +91,22 @@ func TestBinanceProviderCollectAggregates(t *testing.T) {
 		snap.LongShort.Ratio.String() != "1.8" ||
 		snap.Taker.BuySellRatio.String() != "1.2" {
 		t.Fatalf("snapshot incomplete: %+v", snap)
+	}
+}
+
+func TestBinanceProviderCloses(t *testing.T) {
+	closes, err := newStubBinance(t).Closes(context.Background(), "BTCUSDT", "1h", 200)
+	if err != nil {
+		t.Fatalf("Closes: %v", err)
+	}
+	want := []float64{10.5, 11.0, 12.25}
+	if len(closes) != len(want) {
+		t.Fatalf("closes = %v, want %v", closes, want)
+	}
+	for i := range want {
+		if closes[i] != want[i] {
+			t.Fatalf("closes[%d] = %v, want %v", i, closes[i], want[i])
+		}
 	}
 }
 

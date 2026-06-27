@@ -19,6 +19,7 @@ const (
 	CategoryNarrative ContextCategory = "narrative"
 	CategoryOnChain   ContextCategory = "onchain"
 	CategoryOrderFlow ContextCategory = "orderflow"
+	CategoryTechnical ContextCategory = "technical"
 	CategoryRisk      ContextCategory = "risk"
 )
 
@@ -27,6 +28,7 @@ var categoryOrder = []ContextCategory{
 	CategoryNarrative,
 	CategoryOnChain,
 	CategoryOrderFlow,
+	CategoryTechnical,
 	CategoryRisk,
 }
 
