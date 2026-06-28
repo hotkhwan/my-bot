@@ -50,13 +50,14 @@ test("login → goal paper run shows real stats", async ({ page }) => {
   await expect(page.locator("#g-history")).toContainText("BTCUSDT");
 });
 
-test("order ticket present and pages navigate", async ({ page }) => {
+test("trade tab shows the goal form and pages navigate", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
 
-  await expect(page.locator("#side-long")).toBeVisible();
-  await expect(page.locator("#side-short")).toBeVisible();
-  await expect(page.locator("#t-review")).toBeVisible();
+  await expect(page.locator("#g-run")).toBeVisible();
+  await expect(page.locator("#g-symbol")).toBeVisible();
+  // The old order ticket is gone.
+  await expect(page.locator("#side-long")).toHaveCount(0);
 
   await page.click('#nav button[data-view="history"]');
   await expect(page.locator("#view-history")).toBeVisible();
