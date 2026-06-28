@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -137,7 +140,38 @@ func (s *Server) handleAccessRequest(c fiber.Ctx) error {
 	if err := s.access.Request(c.Context(), claimsOf(c).Subject, claimsOf(c).Username); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not record request"})
 	}
+	// Ping the admin so they don't have to poll /pending.
+	subject := claimsOf(c).Subject
+	tgID := strings.TrimPrefix(subject, "tg:")
+	s.notifyAdmin("🛡 New crew access request: " + claimsOf(c).Username + " (" + subject + ")\nApprove with  /approve " + tgID + "   ·  /pending to review.")
 	return c.JSON(fiber.Map{"status": accessRequested})
+}
+
+// notifyAdmin sends a one-off Telegram message to the admin (best-effort, async).
+// It uses the bot's sendMessage directly — safe from any process since only
+// getUpdates (the poller) must be single-instance.
+func (s *Server) notifyAdmin(text string) {
+	token := s.cfg.Telegram.BotToken
+	adminID := s.cfg.Telegram.AdminUserID
+	if token == "" || adminID == 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		payload, _ := json.Marshal(map[string]any{"chat_id": adminID, "text": text})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", bytes.NewReader(payload))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			s.logger.Warn("admin notify failed", "error", err)
+			return
+		}
+		_ = resp.Body.Close()
+	}()
 }
 
 // handleAdminPending lists pending access requests (admin only).

@@ -9,7 +9,12 @@ Before working:
 1. Read `AGENT.md`.
 2. Read `trading_bot_plan.md`.
 3. Read `TRADING_BOT_REVIEW.md` for architecture context.
-4. Use the relevant skill under `.claude/skills/`.
+4. Read `docs/` (Source of Truth): `docs/legal/thai-sec-design-principles.md`, `docs/architecture/secret-model.md`, `docs/branding/positioning.md`, `docs/security/key-management.md`.
+5. Use the relevant skill under `.claude/skills/`.
+
+## Legal Gate
+
+Every user-facing or trading feature PR must pass the **Legal Gate** in `docs/legal/thai-sec-design-principles.md` (alongside the Security Gate). Answer the 5 questions; if any is "yes" or "unsure", it needs legal review before production — do not ship straight to prod. Forbidden in copy/UI/marketing: guaranteed profit, soliciting investment with returns, copy-trading invites, taking custody of funds. Marketing leads with risk/transparency/consistency/discipline, not profit/signal/win-rate. Frame AI as "AI Assessment · Confidence · Suggested Action (user confirms)", never "AI says BUY". Keep the formula secret (execution layer), expose only verifiable results.
 
 ## Review Stance
 

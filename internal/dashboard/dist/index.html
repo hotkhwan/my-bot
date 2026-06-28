@@ -390,8 +390,8 @@
               <div><label for="g-capital">Capital (USDT)</label><input id="g-capital" inputmode="decimal" placeholder="100" value="100" autocomplete="off" /></div>
             </div>
             <div class="grid2">
-              <div><label for="g-risk">Max risk % <span style="color:var(--muted);font-weight:400">· = live leverage (30 → 30x)</span></label><input id="g-risk" inputmode="numeric" placeholder="30" value="30" autocomplete="off" /></div>
-              <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· type or pick a favourite</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC — or pick a favourite below" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist><select id="g-favselect" style="margin-top:0.4rem;width:100%"><option value="">★ pick a favourite…</option></select></div>
+              <div><label for="g-risk">Max risk % <span style="color:var(--muted);font-weight:400">· = live leverage (5 → 5x). Lower = safer.</span></label><input id="g-risk" inputmode="numeric" placeholder="5" value="5" autocomplete="off" /></div>
+              <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· type, or ▾ for ★ favourites</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist></div>
             </div>
             <div class="grid2">
               <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
@@ -444,7 +444,7 @@
             <input id="cmd" placeholder="Ask: market SOL · backtest ETH · help" autocomplete="off" />
             <button class="primary" id="cmd-run" style="flex:0 0 auto;width:5rem">Run</button>
           </div>
-          <pre id="cmd-out" class="output"></pre>
+          <pre id="cmd-out" class="output hidden"></pre>
           <div id="cmd-spark"></div>
           <div id="cmd-confirm" class="actions hidden">
             <button class="primary" id="cmd-yes">Confirm</button>
@@ -461,10 +461,8 @@
         </div>
 
         <div class="card">
-          <strong>Live positions <span style="color:var(--muted);font-weight:400;font-size:0.8rem">· testnet</span></strong>
+          <strong>Live positions <span style="color:var(--muted);font-weight:400;font-size:0.8rem">· testnet · live</span></strong>
           <div id="positions">Loading…</div>
-          <div class="msg" id="stream-msg" style="margin-top:0.5rem"></div>
-          <div id="stream-feed"></div>
         </div>
       </section>
 
@@ -556,6 +554,9 @@
           <div id="comm-coins"></div>
         </div>
       </section>
+      <footer style="max-width:32rem;margin:1.5rem auto 5.5rem;padding:0 1rem;font-size:0.68rem;line-height:1.5;color:var(--muted);text-align:center">
+        ANNY provides analytical tools and execution automation. It does not guarantee profits and should not be considered financial or investment advice. Trading digital assets involves substantial risk. Past performance does not guarantee future results.
+      </footer>
     </main>
 
     <!-- bottom nav -->
@@ -684,7 +685,7 @@
         ["home", "orders", "history", "community", "settings", "login"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== name));
         document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === name));
         if (name === "home") loadHome();
-        if (name === "orders") { refreshKeyStatus(); loadGoalHistory(); loadLeaderboard(); loadPositions(); }
+        if (name === "orders") { refreshKeyStatus(); loadGoalHistory(); loadLeaderboard(); startPositionsPolling(); } else { stopPositionsPolling(); }
         if (name === "history") { loadRecorder(); loadHistory(); }
         if (name === "community") loadLeaderboard();
         if (name === "settings") refreshKeyStatus();
@@ -729,7 +730,6 @@
         showView(v === "login" ? "home" : v);
         refreshKeyStatus();
         loadAIKey();
-        connectStream();
         loadFavourites();
         startPricePolling();
         loadGoalHistory();
@@ -929,7 +929,7 @@
       }
       async function runCommand(command) {
         if (!command.trim()) return;
-        cmdConfirm.classList.add("hidden"); cmdSpark.innerHTML = ""; pendingConfirmId = null; cmdOut.textContent = "…";
+        cmdConfirm.classList.add("hidden"); cmdSpark.innerHTML = ""; pendingConfirmId = null; cmdOut.textContent = "…"; cmdOut.classList.remove("hidden");
         try {
           const r = await fetch("/api/command", { method: "POST", headers: authHeaders(), body: JSON.stringify({ command }) });
           const d = await r.json().catch(() => ({}));
@@ -1013,23 +1013,15 @@
         box.querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.up, -1)));
         box.querySelectorAll("[data-down]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.down, 1)));
         box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => removeFav(b.dataset.rm)));
-        // Feed favourites into the Goal symbol picker. A native <select> scrolls
-        // cleanly however many you star; hottest (highest community edge) first.
+        // Feed favourites into the one Symbol field's datalist (hottest first), so
+        // typing autocompletes and the ▾ caret shows them — one field, no clutter.
         const dl = $("g-favlist");
-        if (dl) dl.innerHTML = f.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("");
-        const sel = $("g-favselect");
-        if (sel) {
+        if (dl) {
           const edgeOf = (s) => { const c = coinEdge[normSym(s)] || coinEdge[s]; return c ? Number(c.edge) || 0 : -1; };
           const ordered = f.slice().sort((a, b) => edgeOf(b) - edgeOf(a));
-          const cur = sel.value;
-          sel.innerHTML = '<option value="">★ pick a favourite…</option>' + ordered.map((s) => {
-            const e = edgeOf(s);
-            return `<option value="${escapeHtml(s)}">${escapeHtml(String(s).replace(/USDT$/, ""))}${e >= 0 ? " · ⭐" + e + "%" : ""}</option>`;
-          }).join("");
-          sel.value = cur;
+          dl.innerHTML = ordered.map((s) => `<option value="${escapeHtml(String(s).replace(/USDT$/, ""))}"></option>`).join("");
         }
       }
-      if ($("g-favselect")) $("g-favselect").onchange = (e) => { if (e.target.value) { $("g-symbol").value = String(e.target.value).replace(/USDT$/, ""); } };
       // Tapping a favourite loads it into the Goal form's symbol.
       function loadIntoGoal(coin) {
         $("g-symbol").value = String(coin).replace(/USDT$/, "");
@@ -1102,7 +1094,7 @@
         $("g-run").disabled = true;
         const body = {
           profit: $("g-profit").value, capital: $("g-capital").value,
-          risk: parseInt($("g-risk").value, 10) || 30, symbol: $("g-symbol").value,
+          risk: parseInt($("g-risk").value, 10) || 5, symbol: $("g-symbol").value,
           strategy: $("g-strategy").value, interval: $("g-interval").value, use_ai: $("g-ai").checked,
         };
         try {
@@ -1119,7 +1111,7 @@
         if (!confirm("Run a LIVE testnet Mission? ANNY will propose a real order on your active key — you still press Confirm before it places.")) return;
         goalMsg("Preparing live Mission…", true);
         $("g-live").disabled = true;
-        const body = { symbol: $("g-symbol").value, capital: $("g-capital").value, risk: parseInt($("g-risk").value, 10) || 30, strategy: $("g-strategy").value, interval: $("g-interval").value, use_ai: $("g-ai").checked };
+        const body = { symbol: $("g-symbol").value, capital: $("g-capital").value, risk: parseInt($("g-risk").value, 10) || 5, strategy: $("g-strategy").value, interval: $("g-interval").value, use_ai: $("g-ai").checked };
         try {
           const r = await fetch("/api/mission/prepare", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
           const d = await r.json().catch(() => ({}));
@@ -1159,11 +1151,16 @@
           if (!ps.length) { box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No open positions. Run a live Mission to open one.</p>'; return; }
           box.innerHTML = ps.map((p) => {
             const pnl = Number(p.pnl) || 0, up = pnl >= 0, sideCls = p.side === "long" ? "up" : "down";
-            return `<div class="grun"><span><b>${escapeHtml(p.symbol)}</b> <span class="${sideCls}">${escapeHtml(p.side)}</span> ${escapeHtml(String(p.leverage))}x<br><span style="color:var(--muted);font-size:0.75rem">entry ${escapeHtml(p.entry)} · mark ${escapeHtml(p.mark)}</span></span><span class="gp ${up ? "up" : "down"}">${fmtPnl(pnl)}</span><button class="ghost" data-close="${escapeHtml(p.symbol)}" style="width:auto;padding:0.2rem 0.6rem;flex:0 0 auto">Close</button></div>`;
+            const lev = Number(p.leverage) > 0 ? " " + p.leverage + "x" : "";
+            return `<div class="grun"><span><b>${escapeHtml(p.symbol)}</b> <span class="${sideCls}">${escapeHtml(p.side)}</span>${lev}<br><span style="color:var(--muted);font-size:0.75rem">entry ${formatPrice(p.entry)} · mark ${formatPrice(p.mark)}</span></span><span class="gp ${up ? "up" : "down"}">${fmtPnl(pnl)} USDT</span><button class="ghost" data-close="${escapeHtml(p.symbol)}" style="width:auto;padding:0.2rem 0.6rem;flex:0 0 auto">Close</button></div>`;
           }).join("");
           box.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => closePosition(b.dataset.close)));
         } catch (e) { box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">Could not load positions.</p>'; }
       }
+      // Realtime-ish: re-poll positions every 8s while the Mission tab is open.
+      let positionsTimer = null;
+      function startPositionsPolling() { stopPositionsPolling(); loadPositions(); positionsTimer = setInterval(loadPositions, 8000); }
+      function stopPositionsPolling() { if (positionsTimer) { clearInterval(positionsTimer); positionsTimer = null; } }
       async function closePosition(symbol) {
         if (!confirm("Close " + symbol + " (100%) on your active key?")) return;
         try {
@@ -1378,26 +1375,8 @@
       }
 
       // ---- live positions ----
-      let stream = null;
-      function streamShow(t, ok) { $("stream-msg").textContent = t; $("stream-msg").style.color = ok ? "var(--profit)" : "var(--muted)"; }
-      function renderEvent(kind, e) {
-        let d = {}; try { d = JSON.parse(e.data); } catch (_) { return; }
-        const when = new Date(d.at || Date.now()).toLocaleTimeString();
-        const label = kind === "trade_closed" ? `closed · PnL ${d.realized_pnl} USDT` : `${d.side} ${d.amount} @ ${d.mark_price} · uPnL ${d.unrealized_pnl}`;
-        const row = document.createElement("div"); row.className = "row";
-        row.innerHTML = `<span>${when} · ${d.symbol}</span><strong>${label}</strong>`;
-        $("stream-feed").prepend(row);
-        while ($("stream-feed").childElementCount > 20) $("stream-feed").lastChild.remove();
-      }
-      function connectStream() {
-        const token = localStorage.getItem("token");
-        if (!token || stream) return;
-        stream = new EventSource("/api/stream?token=" + encodeURIComponent(token));
-        stream.onopen = () => streamShow("Watching live positions…", true);
-        stream.onerror = () => streamShow("No live feed yet (open a position, or enable testnet trading).", false);
-        stream.addEventListener("position_update", (e) => renderEvent("position_update", e));
-        stream.addEventListener("trade_closed", (e) => renderEvent("trade_closed", e));
-      }
+      // Live positions are shown by polling /api/positions (loadPositions) on the
+      // Mission tab — see startPositionsPolling. The old SSE feed was removed.
 
       // ---- status ----
       async function loadStatus() {
