@@ -196,8 +196,11 @@ func (s *Server) aiBias(ctx context.Context, subject, symbol string, price float
 	if advisor == nil {
 		return campaign.BiasBoth, "AI is not configured — add your own AI key in Settings, or it falls back to the rule-based strategy."
 	}
-	// A user's own key isn't metered (it's their quota); the shared server AI is.
-	if !byo {
+	// A user's own key isn't metered (it's their quota). The shared server AI is
+	// metered too — except it's free for the admin and approved crew until the
+	// public free tier opens (FreeSubOpen).
+	meter := !byo && !s.aiFreeForSubject(ctx, subject)
+	if meter {
 		if allowed, msg := s.allow(ctx, subject, "ai"); !allowed {
 			return campaign.BiasBoth, "🔒 " + msg + " (used the rule-based strategy)."
 		}
@@ -215,8 +218,8 @@ func (s *Server) aiBias(ctx context.Context, subject, symbol string, price float
 		s.logger.Warn("goal AI bias failed", "symbol", symbol, "byo", byo, "error", err)
 		return campaign.BiasBoth, "AI was unavailable — used the rule-based strategy (both sides)."
 	}
-	if !byo {
-		s.usage.Incr(subject, "ai") // count a shared-server AI run toward the daily limit
+	if meter {
+		s.usage.Incr(subject, "ai") // count a metered shared-server AI run toward the daily limit
 	}
 	who := "AI"
 	if byo {

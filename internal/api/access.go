@@ -40,10 +40,29 @@ type AccessStore interface {
 }
 
 func (s *Server) isAdmin(c fiber.Ctx) bool {
+	return s.isAdminSubject(claimsOf(c).Subject)
+}
+
+func (s *Server) isAdminSubject(subject string) bool {
 	if s.cfg.Telegram.AdminUserID == 0 {
 		return false
 	}
-	return claimsOf(c).Subject == "tg:"+strconv.FormatInt(s.cfg.Telegram.AdminUserID, 10)
+	return subject == "tg:"+strconv.FormatInt(s.cfg.Telegram.AdminUserID, 10)
+}
+
+// aiFreeForSubject reports whether the shared-server AI is free (unmetered) for
+// this user. During closed beta (FreeSubOpen=false) the admin and every approved
+// crew member get unlimited shared AI; once the public free tier opens, only the
+// admin (Commander) stays unlimited and everyone else is metered by tier.
+func (s *Server) aiFreeForSubject(ctx context.Context, subject string) bool {
+	if s.isAdminSubject(subject) {
+		return true
+	}
+	if s.cfg.App.FreeSubOpen {
+		return false
+	}
+	rec, ok, err := s.access.Get(ctx, subject)
+	return err == nil && ok && rec.Status == accessApproved
 }
 
 // approved reports whether the subject may use the app beyond Home.
@@ -69,6 +88,10 @@ func (s *Server) handleMe(c fiber.Ctx) error {
 	}
 	tier := s.tierOfSubject(c.Context(), subject)
 	lim := limitsFor(tier)
+	aiLimit := lim.AIPerDay
+	if s.aiFreeForSubject(c.Context(), subject) {
+		aiLimit = -1 // unlimited shared AI during closed beta (or admin)
+	}
 	return c.JSON(fiber.Map{
 		"subject":       subject,
 		"username":      claimsOf(c).Username,
@@ -78,7 +101,7 @@ func (s *Server) handleMe(c fiber.Ctx) error {
 		"open":          s.cfg.App.AccessOpen,
 		"tier":          tier,
 		"tier_title":    tierTitle(tier),
-		"ai_limit":      lim.AIPerDay,
+		"ai_limit":      aiLimit,
 		"ai_used":       s.usage.Get(subject, "ai"),
 		"mission_limit": lim.MissionsPerDay,
 		"mission_used":  s.usage.Get(subject, "mission"),
