@@ -42,6 +42,7 @@ Autonomous campaign (testnet, gated):
 Admin:
 /pending          list crew-access requests
 /approve <id>     approve a member
+/unapprove <id>   revoke a member's access
 /tier <id> <plan> set plan: free|captain|commander
 
 Phase 2 management:

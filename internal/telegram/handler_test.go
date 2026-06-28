@@ -188,12 +188,17 @@ func TestHandlerAppCommandLaunchesMiniApp(t *testing.T) {
 type fakeCrew struct {
 	pending  []CrewMember
 	approved []string
+	revoked  []string
 	tiers    map[string]string
 }
 
 func (f *fakeCrew) Pending(context.Context) ([]CrewMember, error) { return f.pending, nil }
 func (f *fakeCrew) Approve(_ context.Context, subject string) error {
 	f.approved = append(f.approved, subject)
+	return nil
+}
+func (f *fakeCrew) Revoke(_ context.Context, subject string) error {
+	f.revoked = append(f.revoked, subject)
 	return nil
 }
 func (f *fakeCrew) SetTier(_ context.Context, subject, tier string) error {
@@ -247,6 +252,14 @@ func TestHandlerCrewApproval(t *testing.T) {
 	s2 := &fakeSender{}
 	if err := handler.Handle(context.Background(), s2, textUpdate(12345, 111, "/approve 999")); err != nil {
 		t.Fatalf("approve: %v", err)
+	}
+	// Admin revokes by id.
+	sR := &fakeSender{}
+	if err := handler.Handle(context.Background(), sR, textUpdate(12345, 111, "/unapprove 999")); err != nil {
+		t.Fatalf("unapprove: %v", err)
+	}
+	if len(crew.revoked) != 1 || crew.revoked[0] != "tg:999" {
+		t.Fatalf("revoked = %v, want [tg:999]", crew.revoked)
 	}
 	if len(crew.approved) != 1 || crew.approved[0] != "tg:999" {
 		t.Fatalf("approved = %v, want [tg:999]", crew.approved)

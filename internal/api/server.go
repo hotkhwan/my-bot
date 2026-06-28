@@ -240,6 +240,7 @@ func (s *Server) routes() {
 	s.app.Post("/api/access/request", s.requireAuth, s.handleAccessRequest)
 	s.app.Get("/api/admin/pending", s.requireAuth, s.handleAdminPending)
 	s.app.Post("/api/admin/approve", s.requireAuth, s.handleAdminApprove)
+	s.app.Post("/api/admin/revoke", s.requireAuth, s.handleAdminRevoke)
 	s.app.Post("/api/admin/tier", s.requireAuth, s.handleAdminTier)
 	s.app.Get("/api/history", s.requireAuth, s.handleHistory)
 	s.app.Post("/api/credentials", s.requireAuth, s.handleStoreCredential)

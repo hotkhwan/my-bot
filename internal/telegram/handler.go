@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +55,7 @@ type CrewMember struct {
 type CrewAdmin interface {
 	Pending(ctx context.Context) ([]CrewMember, error)
 	Approve(ctx context.Context, subject string) error
+	Revoke(ctx context.Context, subject string) error
 	SetTier(ctx context.Context, subject, tier string) error
 }
 
@@ -212,6 +214,8 @@ func (h *Handler) Handle(ctx context.Context, sender Sender, update *models.Upda
 		return h.handlePending(ctx, sender, message.Chat.ID, userID)
 	case "/approve":
 		return h.handleApprove(ctx, sender, message.Chat.ID, userID, commandArg(text))
+	case "/unapprove", "/revoke":
+		return h.handleRevoke(ctx, sender, message.Chat.ID, userID, commandArg(text))
 	case "/tier":
 		return h.handleTier(ctx, sender, message.Chat.ID, userID, commandRest(text))
 	}
@@ -595,6 +599,27 @@ func (h *Handler) handleApprove(ctx context.Context, sender Sender, chatID, user
 		return h.sendText(ctx, sender, chatID, "Could not approve.")
 	}
 	return h.sendText(ctx, sender, chatID, "✅ Approved tg:"+id+" — they now have full access.")
+}
+
+// handleRevoke revokes a user's access (admin only): /unapprove 12345.
+func (h *Handler) handleRevoke(ctx context.Context, sender Sender, chatID, userID int64, arg string) error {
+	if h.adminUserID == 0 || userID != h.adminUserID {
+		return h.sendText(ctx, sender, chatID, "Admin only.")
+	}
+	if h.crew == nil {
+		return h.sendText(ctx, sender, chatID, "Crew approvals are not enabled.")
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(arg, "tg:"))
+	if id == "" {
+		return h.sendText(ctx, sender, chatID, "Usage: /unapprove <telegram id>")
+	}
+	if h.adminUserID != 0 && id == strconv.FormatInt(h.adminUserID, 10) {
+		return h.sendText(ctx, sender, chatID, "You can't revoke yourself.")
+	}
+	if err := h.crew.Revoke(ctx, "tg:"+id); err != nil {
+		return h.sendText(ctx, sender, chatID, "Could not revoke.")
+	}
+	return h.sendText(ctx, sender, chatID, "🚫 Revoked tg:"+id+" — access removed until re-approved.")
 }
 
 // handleTier sets a user's plan (admin only): /tier 12345 captain.

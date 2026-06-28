@@ -134,6 +134,19 @@
       .chip:hover { background: rgba(0, 245, 255, 0.18); }
       a.chip { display: inline-block; text-decoration: none; }
       .linkbtn { background: none; border: none; color: var(--primary); font: inherit; font-size: 0.78rem; cursor: pointer; padding: 0; width: auto; }
+      /* info badge (ⓘ) — replaces long inline hints */
+      .ibadge { display: inline-flex; align-items: center; justify-content: center; width: 1.05rem; height: 1.05rem; border-radius: 50%; border: 1px solid var(--card-border); color: var(--muted); font-size: 0.62rem; cursor: pointer; vertical-align: middle; margin-left: 0.25rem; user-select: none; flex: 0 0 auto; }
+      .ibadge:hover { color: var(--primary); border-color: var(--primary); }
+      /* toast — shows an info badge's detail, webview-safe */
+      .toast { position: fixed; left: 50%; bottom: 5.5rem; transform: translateX(-50%); z-index: 80; max-width: 22rem; width: calc(100% - 2rem); background: #0b1220; border: 1px solid var(--card-border); border-radius: 0.7rem; padding: 0.7rem 0.85rem; font-size: 0.82rem; line-height: 1.45; color: var(--text); box-shadow: 0 12px 36px -10px rgba(0,0,0,0.8); text-align: center; }
+      /* type-or-pick combobox (replaces flaky datalist) */
+      .combo { position: relative; }
+      .combo input { width: 100%; padding-right: 2.2rem; }
+      .combo-caret { position: absolute; right: 0.2rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--muted); width: auto; padding: 0.3rem 0.5rem; cursor: pointer; font-size: 0.85rem; }
+      .combo-menu { position: absolute; left: 0; right: 0; top: 100%; z-index: 40; max-height: 14rem; overflow-y: auto; background: #0b1220; border: 1px solid var(--card-border); border-radius: 0.6rem; margin-top: 0.25rem; box-shadow: 0 12px 32px -10px rgba(0,0,0,0.75); }
+      .combo-item { padding: 0.55rem 0.75rem; cursor: pointer; font-size: 0.9rem; display: flex; justify-content: space-between; gap: 0.5rem; border-bottom: 1px solid rgba(148,163,184,0.08); }
+      .combo-item:last-child { border-bottom: none; }
+      .combo-item:hover, .combo-item.on { background: rgba(0, 245, 255, 0.08); }
       .cmdrow { display: flex; gap: 0.5rem; }
       .output {
         margin-top: 0.8rem; padding: 0.85rem; background: rgba(5, 8, 22, 0.7); border: 1px solid rgba(148, 163, 184, 0.14);
@@ -390,8 +403,8 @@
               <div><label for="g-capital">Capital (USDT)</label><input id="g-capital" inputmode="decimal" placeholder="100" value="100" autocomplete="off" /></div>
             </div>
             <div class="grid2">
-              <div><label for="g-risk">Max risk % <span style="color:var(--muted);font-weight:400">· = live leverage (5 → 5x). Lower = safer.</span></label><input id="g-risk" inputmode="numeric" placeholder="5" value="5" autocomplete="off" /></div>
-              <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· type, or ▾ for ★ favourites</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist></div>
+              <div><label for="g-risk">Max risk %<span class="ibadge" data-info="Max risk % is also your live-trade leverage: 5 = 5x. Lower is safer — it caps how much of your capital a single trade can lose.">ⓘ</span></label><input id="g-risk" inputmode="numeric" placeholder="5" value="5" autocomplete="off" /></div>
+              <div><label for="g-symbol">Symbol<span class="ibadge" data-info="Type any Binance Futures coin, or tap ▾ to pick a ★ favourite.">ⓘ</span></label><div class="combo"><input id="g-symbol" placeholder="BTC" value="BTC" autocomplete="off" /><button type="button" id="g-symbol-caret" class="combo-caret">▾</button></div><div id="g-symbol-menu" class="combo-menu hidden"></div></div>
             </div>
             <div class="grid2">
               <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
@@ -535,6 +548,12 @@
           </div>
           <div class="actions" style="margin-top:0.5rem"><button class="primary" id="tier-set">Set tier</button></div>
           <div class="msg" id="tier-msg"></div>
+          <label for="revoke-subject" style="margin-top:0.9rem">Revoke a member's access</label>
+          <div class="cmdrow">
+            <input id="revoke-subject" placeholder="subject (e.g. tg:468848033)" autocomplete="off" />
+            <button class="ghost" id="revoke-set" style="flex:0 0 auto;width:auto;padding:0.4rem 0.9rem">Revoke</button>
+          </div>
+          <div class="msg" id="revoke-msg"></div>
         </div>
         <div class="card" id="status">Loading status…</div>
       </section>
@@ -583,6 +602,8 @@
       </button>
     </div>
 
+    <div id="toast" class="toast hidden"></div>
+
     <!-- Mission Replay overlay -->
     <div id="replay" class="overlay hidden">
       <div class="sheet">
@@ -611,6 +632,25 @@
         return t ? { Authorization: "Bearer " + t, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
       }
       function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+      // ---- UX helpers ----
+      // Toast: shows an info-badge's detail (webview-safe; no hover needed).
+      let toastTimer = null;
+      function showToast(msg) {
+        const t = $("toast"); if (!t) return;
+        t.textContent = msg; t.classList.remove("hidden");
+        clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add("hidden"), 4200);
+      }
+      // Any ⓘ badge shows its data-info on tap; tapping elsewhere closes menus.
+      document.addEventListener("click", (e) => {
+        const b = e.target.closest(".ibadge");
+        if (b) { e.preventDefault(); showToast(b.getAttribute("data-info") || ""); return; }
+        if (!e.target.closest(".combo") && !e.target.closest(".combo-menu")) {
+          const m = $("g-symbol-menu"); if (m) m.classList.add("hidden");
+        }
+      });
+      // Realtime poll interval by plan: Crew(free) 8s · Captain 3s · Commander 1s.
+      function pollMs() { const t = (me && me.tier) || "free"; return t === "commander" ? 1000 : t === "captain" ? 3000 : 8000; }
 
       // ---- views / nav / url routing ----
       function pathView() {
@@ -678,13 +718,22 @@
         $("tier-msg").textContent = r.ok ? `Set ${d.subject} → ${d.tier}` : d.error || "Failed";
         $("tier-msg").style.color = r.ok ? "var(--profit)" : "var(--loss)";
       };
+      if ($("revoke-set")) $("revoke-set").onclick = async () => {
+        const subject = $("revoke-subject").value.trim();
+        if (!subject || !confirm("Revoke access for " + subject + "?")) return;
+        const r = await fetch("/api/admin/revoke", { method: "POST", headers: authHeaders(), body: JSON.stringify({ subject }) });
+        const d = await r.json().catch(() => ({}));
+        $("revoke-msg").textContent = r.ok ? `Revoked ${d.revoked}` : d.error || "Failed";
+        $("revoke-msg").style.color = r.ok ? "var(--profit)" : "var(--loss)";
+        if (r.ok) loadAdminPending();
+      };
 
       function showView(name) {
         // Locked users are confined to Home.
         if (me && !unlocked() && name !== "home" && name !== "login") name = "home";
         ["home", "orders", "history", "community", "settings", "login"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== name));
         document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === name));
-        if (name === "home") loadHome();
+        if (name === "home") { loadHome(); startHomePolling(); } else { stopHomePolling(); }
         if (name === "orders") { refreshKeyStatus(); loadGoalHistory(); loadLeaderboard(); startPositionsPolling(); } else { stopPositionsPolling(); }
         if (name === "history") { loadRecorder(); loadHistory(); }
         if (name === "community") loadLeaderboard();
@@ -796,7 +845,25 @@
             $("home-mission").innerHTML = `Latest mission <b>#${e.mission_no}</b> · ${escapeHtml(e.symbol)} <span class="flag ${escapeHtml(e.label)}">${escapeHtml(e.label)}</span> <b class="${pnl >= 0 ? "up" : "down"}">${fmtPnl(e.pnl)}</b>`;
           } else { $("home-mission").textContent = "No missions yet — run a goal to begin."; }
         } catch (_) { $("home-mission").textContent = ""; }
+        loadOpenPnL();
       }
+      // Live "Today's Profit": when there are open positions, show their summed
+      // unrealised PnL (refreshed live); otherwise fall back to realized PnL.
+      async function loadOpenPnL() {
+        try {
+          const d = await (await fetch("/api/positions", { headers: authHeaders() })).json();
+          const ps = d.positions || [];
+          if (!ps.length) return; // keep the realized-PnL display from loadHome
+          const sum = ps.reduce((a, p) => a + (Number(p.pnl) || 0), 0);
+          const pos = sum >= 0, el = $("home-pnl");
+          el.textContent = (pos ? "+" : "") + sum.toFixed(2) + " USDT";
+          el.className = "hnum mono " + (pos ? "pos" : "neg");
+          $("home-pnl-pct").innerHTML = `<span class="${pos ? "up" : "down"}">${pos ? "▲" : "▼"}</span> live · ${ps.length} open position${ps.length > 1 ? "s" : ""}`;
+        } catch (_) {}
+      }
+      let homeTimer = null;
+      function startHomePolling() { stopHomePolling(); homeTimer = setInterval(loadOpenPnL, pollMs()); }
+      function stopHomePolling() { if (homeTimer) { clearInterval(homeTimer); homeTimer = null; } }
 
       // ---- auth: password ----
       function show(text, ok) { $("msg").textContent = text; $("msg").style.color = ok ? "var(--profit)" : "var(--loss)"; }
@@ -1013,15 +1080,28 @@
         box.querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.up, -1)));
         box.querySelectorAll("[data-down]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.down, 1)));
         box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => removeFav(b.dataset.rm)));
-        // Feed favourites into the one Symbol field's datalist (hottest first), so
-        // typing autocompletes and the ▾ caret shows them — one field, no clutter.
-        const dl = $("g-favlist");
-        if (dl) {
-          const edgeOf = (s) => { const c = coinEdge[normSym(s)] || coinEdge[s]; return c ? Number(c.edge) || 0 : -1; };
-          const ordered = f.slice().sort((a, b) => edgeOf(b) - edgeOf(a));
-          dl.innerHTML = ordered.map((s) => `<option value="${escapeHtml(String(s).replace(/USDT$/, ""))}"></option>`).join("");
-        }
       }
+      // ---- Symbol combobox (type-or-pick; webview-safe, replaces datalist) ----
+      const POPULAR_COINS = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "TON", "PEPE", "SUI"];
+      function symbolMenuItems(filter) {
+        const edgeOf = (s) => { const c = coinEdge[normSym(s)] || coinEdge[s]; return c ? Number(c.edge) || 0 : -1; };
+        const favs = getFavs().map((s) => String(s).replace(/USDT$/, "")).sort((a, b) => edgeOf(b) - edgeOf(a));
+        const seen = new Set(), list = [];
+        favs.forEach((s) => { if (!seen.has(s)) { seen.add(s); list.push({ s, fav: true }); } });
+        POPULAR_COINS.forEach((s) => { if (!seen.has(s)) { seen.add(s); list.push({ s, fav: false }); } });
+        const q = (filter || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        return list.filter((x) => x.s.includes(q)).slice(0, 40);
+      }
+      function openSymbolMenu() {
+        const menu = $("g-symbol-menu"); if (!menu) return;
+        const items = symbolMenuItems($("g-symbol").value.trim());
+        if (!items.length) { menu.classList.add("hidden"); return; }
+        menu.innerHTML = items.map((x) => `<div class="combo-item" data-sym="${escapeHtml(x.s)}"><span>${x.fav ? "★ " : ""}${escapeHtml(x.s)}</span>${x.fav ? '<span style="color:var(--muted);font-size:0.75rem">favourite</span>' : ""}</div>`).join("");
+        menu.querySelectorAll("[data-sym]").forEach((el) => (el.onclick = () => { $("g-symbol").value = el.dataset.sym; menu.classList.add("hidden"); }));
+        menu.classList.remove("hidden");
+      }
+      if ($("g-symbol-caret")) $("g-symbol-caret").onclick = (e) => { e.stopPropagation(); const m = $("g-symbol-menu"); m.classList.contains("hidden") ? openSymbolMenu() : m.classList.add("hidden"); };
+      if ($("g-symbol")) { $("g-symbol").addEventListener("input", openSymbolMenu); $("g-symbol").addEventListener("focus", openSymbolMenu); }
       // Tapping a favourite loads it into the Goal form's symbol.
       function loadIntoGoal(coin) {
         $("g-symbol").value = String(coin).replace(/USDT$/, "");
@@ -1159,7 +1239,7 @@
       }
       // Realtime-ish: re-poll positions every 8s while the Mission tab is open.
       let positionsTimer = null;
-      function startPositionsPolling() { stopPositionsPolling(); loadPositions(); positionsTimer = setInterval(loadPositions, 8000); }
+      function startPositionsPolling() { stopPositionsPolling(); loadPositions(); positionsTimer = setInterval(loadPositions, pollMs()); }
       function stopPositionsPolling() { if (positionsTimer) { clearInterval(positionsTimer); positionsTimer = null; } }
       async function closePosition(symbol) {
         if (!confirm("Close " + symbol + " (100%) on your active key?")) return;

@@ -33,6 +33,7 @@ type AccessRecord struct {
 const (
 	accessRequested = "requested"
 	accessApproved  = "approved"
+	accessRevoked   = "revoked"
 )
 
 // AccessStore persists per-user access state.
@@ -40,6 +41,7 @@ type AccessStore interface {
 	Get(ctx context.Context, subject string) (AccessRecord, bool, error)
 	Request(ctx context.Context, subject, name string) error
 	Approve(ctx context.Context, subject string) error
+	Revoke(ctx context.Context, subject string) error
 	SetTier(ctx context.Context, subject, tier string) error
 	Pending(ctx context.Context) ([]AccessRecord, error)
 }
@@ -206,6 +208,27 @@ func (s *Server) handleAdminApprove(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"approved": body.Subject})
 }
 
+// handleAdminRevoke revokes a user's access (admin only): they lose the app
+// until re-approved. The admin themselves can't be revoked.
+func (s *Server) handleAdminRevoke(c fiber.Ctx) error {
+	if !s.isAdmin(c) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "admin only"})
+	}
+	var body struct {
+		Subject string `json:"subject"`
+	}
+	if err := json.Unmarshal(c.Body(), &body); err != nil || body.Subject == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject is required"})
+	}
+	if s.isAdminSubject(body.Subject) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot revoke the admin"})
+	}
+	if err := s.access.Revoke(c.Context(), body.Subject); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not revoke"})
+	}
+	return c.JSON(fiber.Map{"revoked": body.Subject})
+}
+
 // memAccess is the default in-process access store. Production wires a Mongo
 // store so approvals survive restarts.
 type memAccess struct {
@@ -242,6 +265,16 @@ func (m *memAccess) Approve(_ context.Context, subject string) error {
 		rec.Tier = TierFree
 	}
 	rec.ApprovedAt = time.Now().UTC()
+	m.recs[subject] = rec
+	return nil
+}
+
+func (m *memAccess) Revoke(_ context.Context, subject string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.recs[subject]
+	rec.Subject = subject
+	rec.Status = accessRevoked
 	m.recs[subject] = rec
 	return nil
 }
