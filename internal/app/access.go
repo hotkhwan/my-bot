@@ -33,6 +33,10 @@ func (c crewAdmin) Approve(ctx context.Context, subject string) error {
 	return c.store.Approve(ctx, subject)
 }
 
+func (c crewAdmin) SetTier(ctx context.Context, subject, tier string) error {
+	return c.store.SetTier(ctx, subject, tier)
+}
+
 // mongoAccess persists crew-access approvals in MongoDB so they survive restarts
 // and are shared across api instances. It implements api.AccessStore. Records
 // are keyed by JWT subject (_id).
@@ -72,9 +76,21 @@ func (m *mongoAccess) Request(ctx context.Context, subject, name string) error {
 }
 
 func (m *mongoAccess) Approve(ctx context.Context, subject string) error {
+	update := bson.D{
+		{Key: "$set", Value: bson.D{
+			{Key: "status", Value: "approved"},
+			{Key: "approved_at", Value: time.Now().UTC()},
+		}},
+		{Key: "$setOnInsert", Value: bson.D{{Key: "tier", Value: "free"}}},
+	}
+	_, err := m.coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: subject}}, update, options.UpdateOne().SetUpsert(true))
+	return err
+}
+
+func (m *mongoAccess) SetTier(ctx context.Context, subject, tier string) error {
 	update := bson.D{{Key: "$set", Value: bson.D{
-		{Key: "status", Value: "approved"},
-		{Key: "approved_at", Value: time.Now().UTC()},
+		{Key: "tier", Value: tier},
+		{Key: "status", Value: "approved"}, // a paid tier implies access
 	}}}
 	_, err := m.coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: subject}}, update, options.UpdateOne().SetUpsert(true))
 	return err

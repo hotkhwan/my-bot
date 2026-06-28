@@ -19,7 +19,8 @@ import (
 type AccessRecord struct {
 	Subject     string    `json:"subject" bson:"_id"`
 	Name        string    `json:"name" bson:"name"`
-	Status      string    `json:"status" bson:"status"` // requested | approved
+	Status      string    `json:"status" bson:"status"`                 // requested | approved
+	Tier        string    `json:"tier,omitempty" bson:"tier,omitempty"` // free | captain | commander
 	RequestedAt time.Time `json:"requested_at" bson:"requested_at"`
 	ApprovedAt  time.Time `json:"approved_at,omitempty" bson:"approved_at,omitempty"`
 }
@@ -34,6 +35,7 @@ type AccessStore interface {
 	Get(ctx context.Context, subject string) (AccessRecord, bool, error)
 	Request(ctx context.Context, subject, name string) error
 	Approve(ctx context.Context, subject string) error
+	SetTier(ctx context.Context, subject, tier string) error
 	Pending(ctx context.Context) ([]AccessRecord, error)
 }
 
@@ -65,14 +67,40 @@ func (s *Server) handleMe(c fiber.Ctx) error {
 			approved = rec.Status == accessApproved
 		}
 	}
+	tier := s.tierOfSubject(c.Context(), subject)
+	lim := limitsFor(tier)
 	return c.JSON(fiber.Map{
-		"subject":  subject,
-		"username": claimsOf(c).Username,
-		"admin":    admin,
-		"approved": approved,
-		"status":   status,
-		"open":     s.cfg.App.AccessOpen,
+		"subject":       subject,
+		"username":      claimsOf(c).Username,
+		"admin":         admin,
+		"approved":      approved,
+		"status":        status,
+		"open":          s.cfg.App.AccessOpen,
+		"tier":          tier,
+		"tier_title":    tierTitle(tier),
+		"ai_limit":      lim.AIPerDay,
+		"ai_used":       s.usage.Get(subject, "ai"),
+		"mission_limit": lim.MissionsPerDay,
+		"mission_used":  s.usage.Get(subject, "mission"),
 	})
+}
+
+// handleAdminTier sets a user's tier (admin only): free | captain | commander.
+func (s *Server) handleAdminTier(c fiber.Ctx) error {
+	if !s.isAdmin(c) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "admin only"})
+	}
+	var body struct {
+		Subject string `json:"subject"`
+		Tier    string `json:"tier"`
+	}
+	if err := json.Unmarshal(c.Body(), &body); err != nil || body.Subject == "" || !validTier(body.Tier) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject and a valid tier (free|captain|commander) are required"})
+	}
+	if err := s.access.SetTier(c.Context(), body.Subject, body.Tier); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not set tier"})
+	}
+	return c.JSON(fiber.Map{"subject": body.Subject, "tier": body.Tier})
 }
 
 // handleAccessRequest records a crew-access request from a non-approved user.
@@ -150,7 +178,23 @@ func (m *memAccess) Approve(_ context.Context, subject string) error {
 	rec := m.recs[subject]
 	rec.Subject = subject
 	rec.Status = accessApproved
+	if rec.Tier == "" {
+		rec.Tier = TierFree
+	}
 	rec.ApprovedAt = time.Now().UTC()
+	m.recs[subject] = rec
+	return nil
+}
+
+func (m *memAccess) SetTier(_ context.Context, subject, tier string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.recs[subject]
+	rec.Subject = subject
+	if rec.Status == "" {
+		rec.Status = accessApproved // setting a paid tier implies access
+	}
+	rec.Tier = tier
 	m.recs[subject] = rec
 	return nil
 }

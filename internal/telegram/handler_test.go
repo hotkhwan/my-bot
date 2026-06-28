@@ -188,11 +188,19 @@ func TestHandlerAppCommandLaunchesMiniApp(t *testing.T) {
 type fakeCrew struct {
 	pending  []CrewMember
 	approved []string
+	tiers    map[string]string
 }
 
 func (f *fakeCrew) Pending(context.Context) ([]CrewMember, error) { return f.pending, nil }
 func (f *fakeCrew) Approve(_ context.Context, subject string) error {
 	f.approved = append(f.approved, subject)
+	return nil
+}
+func (f *fakeCrew) SetTier(_ context.Context, subject, tier string) error {
+	if f.tiers == nil {
+		f.tiers = map[string]string{}
+	}
+	f.tiers[subject] = tier
 	return nil
 }
 
@@ -223,6 +231,27 @@ func TestHandlerCrewApproval(t *testing.T) {
 	}
 	if len(crew.approved) != 1 || crew.approved[0] != "tg:999" {
 		t.Fatalf("approved = %v, want [tg:999]", crew.approved)
+	}
+
+	// Admin upgrades a member's plan.
+	s3 := &fakeSender{}
+	if err := handler.Handle(context.Background(), s3, textUpdate(12345, 111, "/tier 999 captain")); err != nil {
+		t.Fatalf("tier: %v", err)
+	}
+	if crew.tiers["tg:999"] != "captain" {
+		t.Fatalf("tiers = %v, want tg:999 captain", crew.tiers)
+	}
+	// A bad plan is rejected without touching the store.
+	s4 := &fakeSender{}
+	_ = handler.Handle(context.Background(), s4, textUpdate(12345, 111, "/tier 999 platinum"))
+	if !strings.Contains(s4.singleMessage(t).Text, "free, captain, or commander") {
+		t.Fatalf("bad tier msg = %q", s4.singleMessage(t).Text)
+	}
+	// Non-admin cannot set tiers.
+	s5 := &fakeSender{}
+	_ = handler.Handle(context.Background(), s5, textUpdate(999, 111, "/tier 999 commander"))
+	if len(s5.messages) != 0 {
+		t.Fatalf("non-admin /tier should be ignored (got %d msgs)", len(s5.messages))
 	}
 }
 

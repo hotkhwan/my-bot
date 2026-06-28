@@ -301,6 +301,7 @@
             <div class="ahead">Everything looks healthy.</div>
             <div class="asub">Market trend <b id="home-market">—</b> · Confidence <b id="home-confidence">—</b></div>
             <div class="asub" id="home-mission" style="margin-top:0.2rem">Latest mission —</div>
+            <div class="asub" id="home-tier" style="margin-top:0.2rem"></div>
           </div>
         </div>
         <button class="primary cta" id="home-start" type="button">Start Trading →</button>
@@ -455,6 +456,13 @@
           <strong>🛡 Crew approvals</strong>
           <p style="margin:0.3rem 0 0.6rem">New members waiting for access. Approve to unlock the app for them.</p>
           <div id="admin-approvals">Loading…</div>
+          <label for="tier-subject" style="margin-top:0.7rem">Set a member's tier</label>
+          <div class="cmdrow">
+            <input id="tier-subject" placeholder="subject (e.g. tg:468848033)" autocomplete="off" />
+            <select id="tier-value" style="flex:0 0 auto;width:9rem"><option value="free">Crew (free)</option><option value="captain">Captain</option><option value="commander">Commander</option></select>
+          </div>
+          <div class="actions" style="margin-top:0.5rem"><button class="primary" id="tier-set">Set tier</button></div>
+          <div class="msg" id="tier-msg"></div>
         </div>
         <div class="card" id="status">Loading status…</div>
       </section>
@@ -547,6 +555,7 @@
         applyGate();
       }
       function applyGate() {
+        renderTier();
         const ok = unlocked();
         document.querySelectorAll("#nav button").forEach((b) => { if (b.dataset.view !== "home") b.classList.toggle("hidden", !ok); });
         $("admin-card").classList.toggle("hidden", !(me && me.admin));
@@ -575,6 +584,19 @@
         await fetch("/api/admin/approve", { method: "POST", headers: authHeaders(), body: JSON.stringify({ subject }) });
         loadAdminPending();
       }
+      function renderTier() {
+        if (!me || !$("home-tier")) return;
+        const aiTxt = me.ai_limit < 0 ? "unlimited AI" : `${me.ai_used || 0}/${me.ai_limit} AI runs`;
+        const mTxt = me.mission_limit < 0 ? "unlimited missions" : `${me.mission_used || 0}/${me.mission_limit} live missions`;
+        const up = me.tier === "free" ? ' · <b style="color:var(--pink)">upgrade to Captain for more</b>' : "";
+        $("home-tier").innerHTML = `Plan <b>${escapeHtml(me.tier_title || "Crew")}</b> · today ${aiTxt} · ${mTxt}${up}`;
+      }
+      if ($("tier-set")) $("tier-set").onclick = async () => {
+        const r = await fetch("/api/admin/tier", { method: "POST", headers: authHeaders(), body: JSON.stringify({ subject: $("tier-subject").value.trim(), tier: $("tier-value").value }) });
+        const d = await r.json().catch(() => ({}));
+        $("tier-msg").textContent = r.ok ? `Set ${d.subject} → ${d.tier}` : d.error || "Failed";
+        $("tier-msg").style.color = r.ok ? "var(--profit)" : "var(--loss)";
+      };
 
       function showView(name) {
         // Locked users are confined to Home.

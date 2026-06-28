@@ -65,6 +65,7 @@ type Server struct {
 	access      AccessStore
 	aiSecrets   AISecretStore
 	keyring     *auth.Keyring
+	usage       *memUsage
 	logger      *slog.Logger
 	app         *fiber.App
 }
@@ -156,6 +157,9 @@ func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Log
 	if server.aiSecrets == nil {
 		server.aiSecrets = newMemAISecrets()
 	}
+	if server.usage == nil {
+		server.usage = newMemUsage()
+	}
 	server.routes()
 	return server
 }
@@ -222,6 +226,7 @@ func (s *Server) routes() {
 	s.app.Post("/api/access/request", s.requireAuth, s.handleAccessRequest)
 	s.app.Get("/api/admin/pending", s.requireAuth, s.handleAdminPending)
 	s.app.Post("/api/admin/approve", s.requireAuth, s.handleAdminApprove)
+	s.app.Post("/api/admin/tier", s.requireAuth, s.handleAdminTier)
 	s.app.Get("/api/history", s.requireAuth, s.handleHistory)
 	s.app.Post("/api/credentials", s.requireAuth, s.handleStoreCredential)
 	s.app.Get("/api/credentials", s.requireAuth, s.handleGetCredential)

@@ -38,6 +38,9 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	if !ok {
 		return c.JSON(fiber.Map{"output": "A live Mission needs a Telegram login (your key is tied to your Telegram account)."})
 	}
+	if allowed, msg := s.allow(c.Context(), claimsOf(c).Subject, "mission"); !allowed {
+		return c.JSON(fiber.Map{"output": "🔒 " + msg})
+	}
 
 	var req goalRequest
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
@@ -103,6 +106,7 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	if err != nil {
 		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 	}
+	s.usage.Incr(claimsOf(c).Subject, "mission") // count the attempt toward the daily limit
 	return c.JSON(fiber.Map{
 		"output":     "🚀 Review this live Mission (testnet) — press Confirm to place it on your active key:\n\n" + orders.Summary(intent),
 		"confirm_id": confirmation.ID,

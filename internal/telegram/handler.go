@@ -54,6 +54,7 @@ type CrewMember struct {
 type CrewAdmin interface {
 	Pending(ctx context.Context) ([]CrewMember, error)
 	Approve(ctx context.Context, subject string) error
+	SetTier(ctx context.Context, subject, tier string) error
 }
 
 // WithCrew enables the admin-only /pending and /approve commands.
@@ -203,6 +204,8 @@ func (h *Handler) Handle(ctx context.Context, sender Sender, update *models.Upda
 		return h.handlePending(ctx, sender, message.Chat.ID, userID)
 	case "/approve":
 		return h.handleApprove(ctx, sender, message.Chat.ID, userID, commandArg(text))
+	case "/tier":
+		return h.handleTier(ctx, sender, message.Chat.ID, userID, commandRest(text))
 	}
 
 	intent, err := h.parser.Parse(text)
@@ -344,6 +347,15 @@ func commandArg(text string) string {
 	}
 	first, _, _ := strings.Cut(strings.TrimSpace(rest), " ")
 	return strings.TrimSpace(first)
+}
+
+// commandRest returns everything after the command word, or "".
+func commandRest(text string) string {
+	_, rest, found := strings.Cut(strings.TrimSpace(text), " ")
+	if !found {
+		return ""
+	}
+	return strings.TrimSpace(rest)
 }
 
 // marketSymbol normalises a /market argument into a Binance symbol, defaulting
@@ -575,6 +587,34 @@ func (h *Handler) handleApprove(ctx context.Context, sender Sender, chatID, user
 		return h.sendText(ctx, sender, chatID, "Could not approve.")
 	}
 	return h.sendText(ctx, sender, chatID, "✅ Approved tg:"+id+" — they now have full access.")
+}
+
+// handleTier sets a user's plan (admin only): /tier 12345 captain.
+func (h *Handler) handleTier(ctx context.Context, sender Sender, chatID, userID int64, arg string) error {
+	if h.adminUserID == 0 || userID != h.adminUserID {
+		return h.sendText(ctx, sender, chatID, "Admin only.")
+	}
+	if h.crew == nil {
+		return h.sendText(ctx, sender, chatID, "Crew approvals are not enabled.")
+	}
+	fields := strings.Fields(arg)
+	if len(fields) != 2 {
+		return h.sendText(ctx, sender, chatID, "Usage: /tier <telegram id> <free|captain|commander>")
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(fields[0], "tg:"))
+	tier := strings.ToLower(strings.TrimSpace(fields[1]))
+	switch tier {
+	case "free", "captain", "commander":
+	default:
+		return h.sendText(ctx, sender, chatID, "Tier must be free, captain, or commander.")
+	}
+	if id == "" {
+		return h.sendText(ctx, sender, chatID, "Usage: /tier <telegram id> <free|captain|commander>")
+	}
+	if err := h.crew.SetTier(ctx, "tg:"+id, tier); err != nil {
+		return h.sendText(ctx, sender, chatID, "Could not set tier.")
+	}
+	return h.sendText(ctx, sender, chatID, "✅ tg:"+id+" is now on the "+tier+" plan.")
 }
 
 func confirmationKeyboard(id string) models.ReplyMarkup {

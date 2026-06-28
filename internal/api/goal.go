@@ -196,6 +196,12 @@ func (s *Server) aiBias(ctx context.Context, subject, symbol string, price float
 	if advisor == nil {
 		return campaign.BiasBoth, "AI is not configured — add your own AI key in Settings, or it falls back to the rule-based strategy."
 	}
+	// A user's own key isn't metered (it's their quota); the shared server AI is.
+	if !byo {
+		if allowed, msg := s.allow(ctx, subject, "ai"); !allowed {
+			return campaign.BiasBoth, "🔒 " + msg + " (used the rule-based strategy)."
+		}
+	}
 	sig := signals.MarketSignal{
 		Source:     "goal",
 		Symbol:     symbol,
@@ -208,6 +214,9 @@ func (s *Server) aiBias(ctx context.Context, subject, symbol string, price float
 	if err != nil {
 		s.logger.Warn("goal AI bias failed", "symbol", symbol, "byo", byo, "error", err)
 		return campaign.BiasBoth, "AI was unavailable — used the rule-based strategy (both sides)."
+	}
+	if !byo {
+		s.usage.Incr(subject, "ai") // count a shared-server AI run toward the daily limit
 	}
 	who := "AI"
 	if byo {
