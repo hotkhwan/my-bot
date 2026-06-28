@@ -226,6 +226,8 @@ func (s *Server) routes() {
 	s.app.Get("/api/prices", s.requireAuth, s.handlePrices)
 	s.app.Get("/api/favourites", s.requireAuth, s.handleGetFavourites)
 	s.app.Post("/api/favourites", s.requireAuth, s.handleSetFavourites)
+	s.app.Get("/api/positions", s.requireAuth, s.handleGetPositions)
+	s.app.Post("/api/positions/close", s.requireAuth, s.handleClosePosition)
 	s.app.Post("/api/mission/prepare", s.requireAuth, s.handleMissionPrepare)
 	s.app.Post("/api/goal/run", s.requireAuth, s.handleGoalRun)
 	s.app.Get("/api/goal/history", s.requireAuth, s.handleGoalHistory)

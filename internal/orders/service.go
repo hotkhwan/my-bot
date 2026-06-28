@@ -184,6 +184,22 @@ func TraderKey(userID int64) string {
 	return "tg:" + strconv.FormatInt(userID, 10)
 }
 
+// PositionReader is the optional slice of an Executor that can read open
+// positions (the live Binance executor satisfies it; a dry-run one need not).
+type PositionReader interface {
+	Positions(ctx context.Context) ([]domain.Position, error)
+}
+
+// Positions returns the user's open positions on their own account, or nil when
+// the resolved executor cannot read them (e.g. dry-run).
+func (s *Service) Positions(ctx context.Context, userID int64) ([]domain.Position, error) {
+	pr, ok := s.executorForUser(ctx, userID).(PositionReader)
+	if !ok {
+		return nil, nil
+	}
+	return pr.Positions(ctx)
+}
+
 func (s *Service) Prepare(ctx context.Context, userID int64, intent domain.Intent) (Confirmation, error) {
 	if !intent.IsExchangeChanging() {
 		return Confirmation{}, fmt.Errorf("intent %q does not require confirmation", intent.Type)
