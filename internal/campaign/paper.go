@@ -37,9 +37,12 @@ type PaperConfig struct {
 	Bias        PaperBias // restrict direction (AI lean); defaults to both
 	StopLossPct float64   // FIXED SL distance as fraction of entry; when >0 it
 	// overrides the adaptive stop. Default 0 → ATR-adaptive (below).
-	FeeRate     float64 // per-side taker fee fraction; default 0.0004 (0.04%)
-	MaxHoldBars int     // force-close after N bars if neither level hits; default 24
-	WarmupBars  int     // bars before the first trade is allowed; default 30
+	FeeRate float64 // per-side fee fraction; seeds EntryFee/ExitFee when those
+	// are unset. Default 0.0004 (0.04% taker). Kept for back-compat.
+	EntryFeeRate float64 // fee on the entry fill; default = FeeRate (taker: entry is MARKET).
+	ExitFeeRate  float64 // fee on the exit fill; default = FeeRate (taker: SL/TP/close are MARKET).
+	MaxHoldBars  int     // force-close after N bars if neither level hits; default 24
+	WarmupBars   int     // bars before the first trade is allowed; default 30
 	// Adaptive stop: the stop distance is AtrStopMult × recent ATR% (clamped to
 	// [MinStopPct, MaxStopPct]), so a 1% move on 1m and on 1d aren't treated the
 	// same — a fixed % stop is pure noise on higher timeframes and stops out before
@@ -126,6 +129,15 @@ func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error)
 	} else if cfg.FeeRate == 0 {
 		cfg.FeeRate = 0.0004
 	}
+	// Entry and exit are billed separately so each leg can model maker vs taker.
+	// Today both default to the taker FeeRate: entry is a MARKET order and every
+	// exit (SL/TP/close) is MARKET too, so each leg crosses the book.
+	if cfg.EntryFeeRate <= 0 {
+		cfg.EntryFeeRate = cfg.FeeRate
+	}
+	if cfg.ExitFeeRate <= 0 {
+		cfg.ExitFeeRate = cfg.FeeRate
+	}
 	if cfg.MaxHoldBars <= 0 {
 		cfg.MaxHoldBars = 24
 	}
@@ -190,7 +202,7 @@ func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error)
 			i++
 			continue
 		}
-		feeCost := cfg.FeeRate * notional * 2 // entry + exit
+		feeCost := (cfg.EntryFeeRate + cfg.ExitFeeRate) * notional // entry + exit, billed per leg
 		sl, tp := bracket(side, entry, slPct, rr)
 		exitPrice, outcome, exitIdx := resolve(side, sl, tp, candles, i+1, cfg.MaxHoldBars)
 

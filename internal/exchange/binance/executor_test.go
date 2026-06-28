@@ -49,7 +49,7 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 		"GET /fapi/v1/exchangeInfo",
 		"POST /fapi/v1/marginType",
 		"POST /fapi/v1/leverage",
-		"POST /fapi/v1/order",     // entry (LIMIT) stays on the classic endpoint
+		"POST /fapi/v1/order",     // entry (MARKET) stays on the classic endpoint
 		"POST /fapi/v1/algoOrder", // stop loss (conditional)
 		"POST /fapi/v1/algoOrder", // take profit (conditional)
 	}
@@ -63,8 +63,11 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 	}
 
 	entry := requests[3].Query
-	if entry.Get("type") != "LIMIT" || entry.Get("side") != "BUY" || entry.Get("quantity") != "0.001" {
-		t.Fatalf("entry query = %s, want LIMIT BUY quantity 0.001", entry.Encode())
+	if entry.Get("type") != "MARKET" || entry.Get("side") != "BUY" || entry.Get("quantity") != "0.001" {
+		t.Fatalf("entry query = %s, want MARKET BUY quantity 0.001", entry.Encode())
+	}
+	if entry.Get("price") != "" || entry.Get("timeInForce") != "" {
+		t.Fatalf("entry query = %s, want no price/timeInForce on a MARKET order", entry.Encode())
 	}
 	if entry.Get("signature") == "" || entry.Get("timestamp") == "" {
 		t.Fatalf("entry query = %s, want signed request", entry.Encode())

@@ -172,13 +172,14 @@ func (e *Executor) executeOpen(ctx context.Context, confirmation orders.Confirma
 	}
 
 	entrySide, exitSide := orderSides(intent.Side)
+	// Entry is a MARKET order: it fills immediately (taker) so a mission can never
+	// hang on an unfilled limit. The signal's entry price still drives the SL/TP
+	// brackets below; the actual fill is at the prevailing market price.
 	entryOrder, err := e.newOrder(ctx, url.Values{
 		"symbol":           {intent.Symbol},
 		"side":             {entrySide},
-		"type":             {"LIMIT"},
-		"timeInForce":      {"GTC"},
+		"type":             {"MARKET"},
 		"quantity":         {quantity.String()},
-		"price":            {entry.String()},
 		"newClientOrderId": {clientOrderID(confirmation.ID, "entry")},
 	})
 	if err != nil {
