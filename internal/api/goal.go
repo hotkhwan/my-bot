@@ -75,7 +75,7 @@ const (
 	goalMaxBars     = 1000
 	goalMinBars     = 60
 	goalDefaultBars = 500
-	goalHistoryMax  = 50
+	goalHistoryMax  = 200
 )
 
 // handleGoalRun runs a paper goal over real candles and returns rich stats.

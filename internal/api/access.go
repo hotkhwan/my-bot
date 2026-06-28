@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"bottrade/internal/version"
+
 	"github.com/gofiber/fiber/v3"
 )
 
@@ -93,6 +95,7 @@ func (s *Server) handleMe(c fiber.Ctx) error {
 		aiLimit = -1 // unlimited shared AI during closed beta (or admin)
 	}
 	return c.JSON(fiber.Map{
+		"version":       version.Version,
 		"subject":       subject,
 		"username":      claimsOf(c).Username,
 		"admin":         admin,

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ANNY · AI Trading Companion</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23050816'/%3E%3Cpath d='M32 8 L55 51 L9 51 Z M32 23 L45 48 L19 48 Z' fill='%23ffffff' fill-rule='evenodd' stroke='%23FF2D82' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M32 31 L33.3 37.5 L40 39 L33.3 40.5 L32 47 L30.7 40.5 L24 39 L30.7 37.5 Z' fill='%23FF2D82'/%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23050816'/%3E%3Cpath d='M13 21 L17 5 L31 18 Z' fill='%230b1220' stroke='%2300C2E0' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M51 21 L47 5 L33 18 Z' fill='%230b1220' stroke='%2300C2E0' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M17.5 17 L19 9 L26 16 Z' fill='%23FF2D82'/%3E%3Cpath d='M46.5 17 L45 9 L38 16 Z' fill='%23FF2D82'/%3E%3Crect x='11' y='16' width='42' height='34' rx='14' fill='%230b1220' stroke='%2300C2E0' stroke-width='2'/%3E%3Cpath d='M23 28 l5 4 -5 4' stroke='%2300F5FF' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 28 l-5 4 5 4' stroke='%2300F5FF' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M27 42 Q32 46 37 42' stroke='%2300F5FF' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -78,6 +78,7 @@
       .appbar .spacer { flex: 1; }
       .greeting { font-family: var(--font-head); font-size: 0.92rem; color: var(--text); margin: 0.1rem 0 0.2rem; }
       .greeting span { color: var(--primary); }
+      .ver { font-family: var(--font-mono); font-size: 0.7rem; color: var(--muted); margin: 0 0 0.6rem; letter-spacing: 0.3px; }
       .who { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; color: var(--muted); }
       .who img { width: 1.9rem; height: 1.9rem; border-radius: 50%; object-fit: cover; border: 1px solid var(--card-border); }
 
@@ -131,6 +132,8 @@
       .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
       .chip { padding: 0.35rem 0.7rem; font-size: 0.78rem; font-weight: 600; background: rgba(0, 245, 255, 0.08); color: var(--primary); border: 1px solid var(--card-border); border-radius: 999px; font-family: var(--font-mono); transition: background 0.18s; }
       .chip:hover { background: rgba(0, 245, 255, 0.18); }
+      a.chip { display: inline-block; text-decoration: none; }
+      .linkbtn { background: none; border: none; color: var(--primary); font: inherit; font-size: 0.78rem; cursor: pointer; padding: 0; width: auto; }
       .cmdrow { display: flex; gap: 0.5rem; }
       .output {
         margin-top: 0.8rem; padding: 0.85rem; background: rgba(5, 8, 22, 0.7); border: 1px solid rgba(148, 163, 184, 0.14);
@@ -300,6 +303,7 @@
       <!-- HOME -->
       <section id="view-home" class="hidden">
         <p class="greeting" id="home-greeting">Good evening, Captain 👋</p>
+        <div class="ver" id="home-ver"></div>
         <div class="hero">
           <div class="hlabel">Today's Profit</div>
           <div class="hnum mono pos" id="home-pnl">—</div>
@@ -373,9 +377,10 @@
               <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
               <div><label for="g-interval">Timeframe</label><select id="g-interval"><option value="15m">15m</option><option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option></select></div>
             </div>
-            <label class="gai"><input type="checkbox" id="g-ai" /> Let AI pick the side (per run)</label>
+            <label class="gai"><input type="checkbox" id="g-ai" checked /> Let AI pick the side (per run)</label>
             <button class="primary" id="g-run" type="button">Run goal (paper)</button>
             <button class="ghost" id="g-live" type="button" style="border:1px solid var(--card-border)">🚀 Run live Mission (testnet) — places a real order on your active key, after Confirm</button>
+            <div id="g-keyhint" class="reco hidden" style="margin-top:0.5rem"></div>
             <div class="msg" id="g-msg"></div>
           </div>
           <pre id="g-out" class="output hidden"></pre>
@@ -432,12 +437,19 @@
         </div>
         <div class="card">
           <strong>Performance</strong>
+          <p style="margin:0.3rem 0 0.6rem">Across all your paper goal runs.</p>
           <div id="report">Loading…</div>
         </div>
         <div class="card">
           <strong>By coin</strong>
           <p style="margin:0.3rem 0 0.6rem">Which coins are working for you.</p>
           <div id="bycoin">Loading…</div>
+        </div>
+        <div class="card">
+          <strong>All runs</strong>
+          <p style="margin:0.3rem 0 0.6rem">Every paper goal run, newest first.</p>
+          <div id="g-runs">Loading…</div>
+          <div id="g-runs-sentinel" style="height:1px"></div>
         </div>
       </section>
 
@@ -446,6 +458,10 @@
         <div class="card">
           <strong>Binance API keys</strong>
           <p style="margin:0.3rem 0 0.6rem">Add profiles (testnet, live) and pick the active one. Enable <b>Futures</b>, disable <b>Withdrawals</b>.</p>
+          <div class="chips" style="margin-bottom:0.7rem">
+            <a class="chip" href="https://testnet.binancefuture.com/" target="_blank" rel="noopener">➕ Create demo (testnet) API key ↗</a>
+            <a class="chip" href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noopener">Create live API key ↗</a>
+          </div>
           <div id="profiles"></div>
           <label for="profName">Add / update a profile</label>
           <div class="cmdrow">
@@ -600,7 +616,12 @@
         await fetch("/api/admin/approve", { method: "POST", headers: authHeaders(), body: JSON.stringify({ subject }) });
         loadAdminPending();
       }
+      function renderVersion() {
+        const box = $("home-ver"); if (!box) return;
+        box.textContent = me && me.version ? "ANNY v" + me.version : "";
+      }
       function renderTier() {
+        renderVersion();
         if (!me || !$("home-tier")) return;
         const aiTxt = me.ai_limit < 0 ? "unlimited AI" : `${me.ai_used || 0}/${me.ai_limit} AI runs`;
         const mTxt = me.mission_limit < 0 ? "unlimited missions" : `${me.mission_used || 0}/${me.mission_limit} live missions`;
@@ -620,8 +641,10 @@
         ["home", "orders", "history", "community", "settings", "login"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== name));
         document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === name));
         if (name === "home") loadHome();
+        if (name === "orders") { refreshKeyStatus(); loadGoalHistory(); loadLeaderboard(); }
         if (name === "history") { loadRecorder(); loadHistory(); }
         if (name === "community") loadLeaderboard();
+        if (name === "settings") refreshKeyStatus();
         if (tgApp && tgApp.BackButton) { name === "home" || name === "login" ? tgApp.BackButton.hide() : tgApp.BackButton.show(); }
       }
       function navigate(view) {
@@ -774,6 +797,7 @@
         try {
           const d = await (await fetch("/api/credentials", { headers: authHeaders() })).json();
           const list = d.profiles || [];
+          renderKeyHint(list);
           const box = $("profiles");
           if (!list.length) { box.innerHTML = '<p>No profiles yet — add one below.</p>'; return; }
           box.innerHTML = list.map((p) => {
@@ -785,6 +809,16 @@
           box.querySelectorAll("[data-active]").forEach((b) => (b.onclick = () => setActive(b.dataset.active)));
           box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => removeProfile(b.dataset.del)));
         } catch (e) {}
+      }
+      // renderKeyHint shows a banner on the Goal tab when there's no active key:
+      // paper runs work without one, but a live Mission needs a Binance key.
+      function renderKeyHint(list) {
+        const box = $("g-keyhint"); if (!box) return;
+        const hasActive = (list || []).some((p) => p.active);
+        if (hasActive) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+        box.innerHTML = `🔑 <b>No Binance key yet.</b> Paper runs work without one — but a live Mission needs an active key. <button class="ghost" id="g-keyhint-go" type="button" style="width:auto;padding:0.25rem 0.65rem;margin-left:auto">Set up a key →</button>`;
+        box.classList.remove("hidden");
+        const go = $("g-keyhint-go"); if (go) go.onclick = () => navigate("settings");
       }
       async function setActive(profile) {
         const r = await fetch("/api/credentials/active", { method: "POST", headers: authHeaders(), body: JSON.stringify({ profile }) });
@@ -1002,10 +1036,12 @@
           const d = await (await fetch("/api/goal/history", { headers: authHeaders() })).json();
           const runs = d.runs || [];
           if (!runs.length) { $("g-history").innerHTML = ""; return; }
-          $("g-history").innerHTML = "<label>Recent runs</label>" + runs.slice(0, 8).map((x) => {
+          const more = runs.length > 5 ? ` <button class="linkbtn" id="g-history-all" type="button">See all ${runs.length} in History →</button>` : "";
+          $("g-history").innerHTML = `<label>Recent runs${more}</label>` + runs.slice(0, 5).map((x) => {
             const pnl = Number(x.realized_pnl || 0);
             return `<div class="grun"><span><b>${escapeHtml(x.symbol)}</b> ${escapeHtml(x.strategy)}${x.used_ai ? " · AI" : ""}</span><span style="color:var(--muted)">${Math.round(x.win_rate_pct || 0)}% · ${x.trades}t</span><span class="gp ${pnl >= 0 ? "up" : "down"}">${fmtPnl(pnl)}</span></div>`;
           }).join("");
+          const allBtn = $("g-history-all"); if (allBtn) allBtn.onclick = () => navigate("history");
         } catch (e) {}
       }
 
@@ -1142,20 +1178,60 @@
       }
 
       // ---- history ----
+      // History is driven by paper goal runs (the only activity until live trading
+      // starts): Performance + By coin aggregate every run; All runs paginates 10
+      // at a time with infinite scroll.
+      let histRuns = [];
+      let histShown = 0;
+      const HIST_PAGE = 10;
       async function loadHistory() {
         try {
-          const d = await (await fetch("/api/history", { headers: authHeaders() })).json();
-          $("report").innerHTML = [
-            ["Trades", d.trades ?? 0], ["Win rate", (d.win_rate ?? 0) + "%"], ["Total PnL", (d.total_pnl ?? 0) + " USDT"],
-            ["Wins / Losses", (d.wins ?? 0) + " / " + (d.losses ?? 0)], ["Expectancy", d.expectancy ?? 0],
-          ].map(([k, v]) => `<div class="row"><span>${k}</span><strong>${v}</strong></div>`).join("");
-          const sym = d.by_symbol || {};
-          const keys = Object.keys(sym).sort((a, b) => Number(sym[b].total_pnl) - Number(sym[a].total_pnl));
-          $("bycoin").innerHTML = keys.length ? keys.map((s) => {
-            const g = sym[s], pos = Number(g.total_pnl) >= 0;
-            return `<div class="coincard"><div class="top"><span class="sym">${escapeHtml(s)}</span><span class="spacer" style="flex:1"></span><span class="pnl ${pos ? "pos" : "neg"}">${pos ? "+" : ""}${g.total_pnl} USDT</span></div><div class="sub"><span>Trades ${g.trades}</span><span>Win ${g.win_rate}%</span><span>${g.wins}W / ${g.losses}L</span></div></div>`;
-          }).join("") : '<p>No closed trades yet.</p>';
-        } catch (e) { $("report").textContent = "Could not load history."; $("bycoin").textContent = ""; }
+          const d = await (await fetch("/api/goal/history", { headers: authHeaders() })).json();
+          histRuns = d.runs || [];
+        } catch (e) { $("report").textContent = "Could not load history."; $("bycoin").textContent = ""; $("g-runs").textContent = ""; return; }
+        if (!histRuns.length) {
+          $("report").innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No runs yet — run a Goal to start your record.</p>';
+          $("bycoin").innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No data yet.</p>';
+          $("g-runs").innerHTML = ""; return;
+        }
+        // Performance across all runs.
+        let trades = 0, wins = 0, losses = 0, pnl = 0;
+        const byc = {};
+        histRuns.forEach((x) => {
+          trades += x.trades || 0; wins += x.wins || 0; losses += x.losses || 0;
+          const p = Number(x.realized_pnl || 0); pnl += p;
+          const s = x.symbol || "?";
+          const g = byc[s] || (byc[s] = { runs: 0, trades: 0, wins: 0, losses: 0, pnl: 0 });
+          g.runs++; g.trades += x.trades || 0; g.wins += x.wins || 0; g.losses += x.losses || 0; g.pnl += p;
+        });
+        const wr = (wins + losses) ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0;
+        $("report").innerHTML = [
+          ["Runs", histRuns.length], ["Trades", trades], ["Win rate", wr + "%"],
+          ["Total PnL", fmtPnl(pnl) + " USDT"], ["Avg / run", fmtPnl(pnl / histRuns.length) + " USDT"], ["Wins / Losses", wins + " / " + losses],
+        ].map(([k, v]) => `<div class="row"><span>${k}</span><strong>${v}</strong></div>`).join("");
+        // By coin, best PnL first.
+        const keys = Object.keys(byc).sort((a, b) => byc[b].pnl - byc[a].pnl);
+        $("bycoin").innerHTML = keys.map((s) => {
+          const g = byc[s], pos = g.pnl >= 0, gwr = (g.wins + g.losses) ? Math.round((g.wins / (g.wins + g.losses)) * 100) : 0;
+          return `<div class="coincard"><div class="top"><span class="sym">${escapeHtml(s)}</span><span class="spacer" style="flex:1"></span><span class="pnl ${pos ? "pos" : "neg"}">${fmtPnl(g.pnl)} USDT</span></div><div class="sub"><span>${g.runs} runs</span><span>Win ${gwr}%</span><span>${g.trades}t</span></div></div>`;
+        }).join("");
+        // All runs: reset and render the first page.
+        histShown = 0; $("g-runs").innerHTML = ""; renderMoreRuns();
+      }
+      function renderMoreRuns() {
+        const next = histRuns.slice(histShown, histShown + HIST_PAGE);
+        if (!next.length) return;
+        $("g-runs").insertAdjacentHTML("beforeend", next.map((x) => {
+          const p = Number(x.realized_pnl || 0), when = x.created_at ? new Date(x.created_at).toLocaleString() : "";
+          return `<div class="grun"><span><b>${escapeHtml(x.symbol)}</b> ${escapeHtml(x.strategy)}${x.used_ai ? " · AI" : ""}<br><span style="color:var(--muted);font-size:0.75rem">${escapeHtml(when)}</span></span><span style="color:var(--muted)">${Math.round(x.win_rate_pct || 0)}% · ${x.trades}t</span><span class="gp ${p >= 0 ? "up" : "down"}">${fmtPnl(p)}</span></div>`;
+        }).join(""));
+        histShown += next.length;
+      }
+      // Infinite scroll: load more runs as the sentinel nears the viewport.
+      if ("IntersectionObserver" in window) {
+        new IntersectionObserver((entries) => {
+          if (entries[0].isIntersecting && histShown < histRuns.length) renderMoreRuns();
+        }, { rootMargin: "120px" }).observe($("g-runs-sentinel"));
       }
 
       // ---- live positions ----
