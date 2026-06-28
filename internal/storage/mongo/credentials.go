@@ -61,7 +61,7 @@ func (r *CredentialRepository) FindActive(ctx context.Context, userID string) (a
 
 // Remove deletes one of a user's credential profiles.
 func (r *CredentialRepository) Remove(ctx context.Context, userID, profile string) error {
-	if _, err := r.coll.DeleteOne(ctx, bson.M{"user_id": userID, "profile": profile}); err != nil {
+	if _, err := r.coll.DeleteOne(ctx, profileFilter(userID, profile)); err != nil {
 		return fmt.Errorf("remove credential: %w", err)
 	}
 	return nil
@@ -72,8 +72,23 @@ func (r *CredentialRepository) SetActive(ctx context.Context, userID, profile st
 	if _, err := r.coll.UpdateMany(ctx, bson.M{"user_id": userID}, bson.M{"$set": bson.M{"active": false}}); err != nil {
 		return fmt.Errorf("clear active credential: %w", err)
 	}
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"user_id": userID, "profile": profile}, bson.M{"$set": bson.M{"active": true}}); err != nil {
+	if _, err := r.coll.UpdateOne(ctx, profileFilter(userID, profile), bson.M{"$set": bson.M{"active": true}}); err != nil {
 		return fmt.Errorf("set active credential: %w", err)
 	}
 	return nil
+}
+
+// profileFilter matches a stored profile by name. A legacy "unnamed" profile
+// (empty name) may have been written before the profile field existed, so in
+// Mongo it can be empty, null, or absent — match all three so it can still be
+// removed or activated.
+func profileFilter(userID, profile string) bson.M {
+	if profile == "" {
+		return bson.M{"user_id": userID, "$or": []bson.M{
+			{"profile": ""},
+			{"profile": nil},
+			{"profile": bson.M{"$exists": false}},
+		}}
+	}
+	return bson.M{"user_id": userID, "profile": profile}
 }

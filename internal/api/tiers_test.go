@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,85 @@ import (
 	"bottrade/internal/auth"
 	"bottrade/internal/orders"
 )
+
+// getJSON issues an authenticated GET and decodes the JSON body.
+func getJSON(t *testing.T, server *Server, path, tok string) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, _ := server.App().Test(req)
+	defer resp.Body.Close()
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	return out
+}
+
+func TestSharedAIFreeForApprovedCrew(t *testing.T) {
+	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
+	user, _ := tk.Issue("tg:5", "crew", "user")
+
+	// Closed beta (FreeSubOpen=false): an approved crew member gets unlimited AI.
+	beta := NewServer(testConfigWith(t, nil), nil, testLogger(), WithTokenizer(tk))
+	if err := beta.access.Approve(context.Background(), "tg:5"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if me := getJSON(t, beta, "/api/me", user); me["ai_limit"].(float64) != -1 {
+		t.Fatalf("approved crew ai_limit = %v, want -1 (unlimited)", me["ai_limit"])
+	}
+
+	// Public free launch (FreeSubOpen=true): the same user is metered by tier.
+	open := NewServer(testConfigWith(t, map[string]string{"FREE_SUB_OPEN": "true"}), nil, testLogger(), WithTokenizer(tk))
+	if err := open.access.Approve(context.Background(), "tg:5"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if me := getJSON(t, open, "/api/me", user); me["ai_limit"].(float64) != 10 {
+		t.Fatalf("free-tier ai_limit = %v, want 10", me["ai_limit"])
+	}
+}
+
+func TestMissionRequiresActiveKey(t *testing.T) {
+	stub := stubKlines(t)
+	cfg := testConfigWith(t, map[string]string{"MARKETDATA_BASE_URL": stub.URL, "ACCESS_OPEN": "true"})
+	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
+	user, _ := tk.Issue("tg:7", "u", "user")
+	keyring, err := auth.NewKeyring(map[string][]byte{"v1": bytes.Repeat([]byte("a"), auth.KeySize)}, "v1")
+	if err != nil {
+		t.Fatalf("keyring: %v", err)
+	}
+	credSvc, _ := auth.NewCredentialService(keyring, &memCredRepo{m: map[string][]auth.BinanceCredential{}})
+	server := NewServer(cfg, nil, testLogger(), WithTokenizer(tk),
+		WithOrders(orders.NewService(true, time.Minute, testLogger())), WithCredentials(credSvc))
+
+	prepare := func() (string, bool) {
+		b, _ := json.Marshal(map[string]any{"symbol": "BTC", "capital": 100})
+		req := httptest.NewRequest(http.MethodPost, "/api/mission/prepare", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+user)
+		resp, _ := server.App().Test(req)
+		defer resp.Body.Close()
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		s, _ := out["output"].(string)
+		need, _ := out["need_key"].(bool)
+		return s, need
+	}
+
+	// No active key yet → blocked with a Settings nudge.
+	if out, need := prepare(); !need || !strings.Contains(out, "No active Binance key") {
+		t.Fatalf("without key: need=%v out=%q, want need_key + nudge", need, out)
+	}
+	// Activate a key → the mission flows to the Confirm step.
+	if err := credSvc.StoreProfile(context.Background(), "tg:7", "testnet",
+		auth.BinanceKeys{APIKey: "k-abcd1234", APISecret: "s-abcd1234", Testnet: true}); err != nil {
+		t.Fatalf("store profile: %v", err)
+	}
+	if err := credSvc.SetActive(context.Background(), "tg:7", "testnet"); err != nil {
+		t.Fatalf("set active: %v", err)
+	}
+	if out, need := prepare(); need || !strings.Contains(out, "Review this live Mission") {
+		t.Fatalf("with active key: need=%v out=%q, want the Confirm step", need, out)
+	}
+}
 
 func TestTierLimitsAndUpgrade(t *testing.T) {
 	stub := stubKlines(t)

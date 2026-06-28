@@ -69,6 +69,11 @@ type AppConfig struct {
 	// When false (default, pre-launch), non-admin users must request access and
 	// be approved before the app unlocks beyond Home.
 	AccessOpen bool
+	// FreeSubOpen flips the shared-server AI from "free for admin + approved crew"
+	// (closed beta, default) to metered by tier (public free launch). Until it is
+	// true, approved users get unlimited shared AI; after, the free-tier daily
+	// limit applies.
+	FreeSubOpen bool
 }
 
 type TelegramConfig struct {
@@ -216,6 +221,7 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.App.Env = reader.string("APP_ENV", cfg.App.Env)
 	cfg.App.LogLevel = strings.ToLower(reader.string("LOG_LEVEL", cfg.App.LogLevel))
 	cfg.App.AccessOpen = reader.bool("ACCESS_OPEN", cfg.App.AccessOpen)
+	cfg.App.FreeSubOpen = reader.bool("FREE_SUB_OPEN", cfg.App.FreeSubOpen)
 	cfg.App.DryRun = reader.bool("DRY_RUN", cfg.App.DryRun)
 	cfg.App.RealTradingEnabled = reader.bool("REAL_TRADING_ENABLED", cfg.App.RealTradingEnabled)
 	cfg.App.OrderSizingMode = strings.ToLower(reader.string("ORDER_SIZING_MODE", cfg.App.OrderSizingMode))

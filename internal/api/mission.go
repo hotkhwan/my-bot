@@ -38,6 +38,14 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	if !ok {
 		return c.JSON(fiber.Map{"output": "A live Mission needs a Telegram login (your key is tied to your Telegram account)."})
 	}
+	// A live Mission places a real order on the user's active key. Require one to
+	// be set up and active first, and point them to Settings to do it.
+	if s.credentials != nil && !s.hasActiveKey(c) {
+		return c.JSON(fiber.Map{
+			"output":   "🔑 No active Binance key yet. Open Settings → add a key profile (testnet, Futures on, Withdrawals off) → tap “Make active”, then run the Mission.",
+			"need_key": true,
+		})
+	}
 	if allowed, msg := s.allow(c.Context(), claimsOf(c).Subject, "mission"); !allowed {
 		return c.JSON(fiber.Map{"output": "🔒 " + msg})
 	}
@@ -111,6 +119,23 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 		"output":     "🚀 Review this live Mission (testnet) — press Confirm to place it on your active key:\n\n" + orders.Summary(intent),
 		"confirm_id": confirmation.ID,
 	})
+}
+
+// hasActiveKey reports whether the user has a Binance key profile marked active.
+func (s *Server) hasActiveKey(c fiber.Ctx) bool {
+	if s.credentials == nil {
+		return false
+	}
+	profiles, err := s.credentials.Profiles(c.Context(), claimsOf(c).Subject)
+	if err != nil {
+		return false
+	}
+	for _, p := range profiles {
+		if p.Active {
+			return true
+		}
+	}
+	return false
 }
 
 func missionBracket(side string, entry float64) (sl, tp float64) {
