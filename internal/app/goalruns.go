@@ -45,3 +45,23 @@ func (m *mongoGoalRuns) List(ctx context.Context, userKey string, limit int) ([]
 	}
 	return runs, nil
 }
+
+// Community returns the most recent runs across all users for aggregate stats.
+func (m *mongoGoalRuns) Community(ctx context.Context, limit int) ([]api.GoalRun, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	opts := options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetLimit(int64(limit))
+	cursor, err := m.coll.Find(ctx, bson.D{}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var runs []api.GoalRun
+	if err := cursor.All(ctx, &runs); err != nil {
+		return nil, err
+	}
+	return runs, nil
+}

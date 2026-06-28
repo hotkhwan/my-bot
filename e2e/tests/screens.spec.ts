@@ -41,8 +41,21 @@ test("capture all screens", async ({ page }) => {
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${OUT}/03-history.png`, fullPage: true });
 
+  await page.click('#nav button[data-view="community"]');
+  await expect(page.locator("#view-community")).toBeVisible();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${OUT}/04-community.png`, fullPage: true });
+
   await page.click('#nav button[data-view="settings"]');
   await expect(page.locator("#view-settings")).toBeVisible();
   await page.waitForTimeout(300);
-  await page.screenshot({ path: `${OUT}/04-settings.png`, fullPage: true });
+  await page.screenshot({ path: `${OUT}/05-settings.png`, fullPage: true });
+
+  // Mission Replay overlay.
+  await page.click('#nav button[data-view="history"]');
+  await expect(page.locator("#view-history")).toBeVisible();
+  await page.click("#rec-feed .mission.tap");
+  await expect(page.locator("#replay")).toBeVisible();
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${OUT}/06-replay.png`, fullPage: true });
 });

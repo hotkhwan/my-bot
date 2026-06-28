@@ -44,6 +44,8 @@ type recorderEntry struct {
 	Symbol     string    `json:"symbol"`
 	Side       string    `json:"side,omitempty"`
 	Leverage   int       `json:"leverage,omitempty"`
+	Entry      string    `json:"entry,omitempty"`
+	Exit       string    `json:"exit,omitempty"`
 	Action     string    `json:"action"`
 	Reason     string    `json:"reason,omitempty"`
 	PnL        string    `json:"pnl"`
@@ -88,6 +90,8 @@ func (s *Server) handleRecorder(c fiber.Ctx) error {
 					Symbol:     t.Symbol,
 					Side:       t.Side,
 					Leverage:   t.Leverage,
+					Entry:      t.Entry.String(),
+					Exit:       t.Exit.String(),
 					Action:     string(t.Outcome),
 					Reason:     missionReason(t.Strategy, t.Models),
 					PnL:        t.PnLUSDT.String(),

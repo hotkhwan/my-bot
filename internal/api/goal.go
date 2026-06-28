@@ -58,10 +58,12 @@ type GoalRun struct {
 }
 
 // GoalRunStore persists and lists paper goal runs for a user, keyed by JWT
-// subject.
+// subject. Community returns recent runs across ALL users (aggregate only — used
+// for the leaderboard and coin suggestions; never exposes who ran what).
 type GoalRunStore interface {
 	Save(ctx context.Context, run GoalRun) error
 	List(ctx context.Context, userKey string, limit int) ([]GoalRun, error)
+	Community(ctx context.Context, limit int) ([]GoalRun, error)
 }
 
 var allowedIntervals = map[string]bool{
@@ -320,6 +322,20 @@ func (m *memGoalRuns) List(_ context.Context, userKey string, limit int) ([]Goal
 	src := m.runs[userKey]
 	out := make([]GoalRun, len(src))
 	copy(out, src)
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *memGoalRuns) Community(_ context.Context, limit int) ([]GoalRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []GoalRun
+	for _, runs := range m.runs {
+		out = append(out, runs...)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]

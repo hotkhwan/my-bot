@@ -215,6 +215,26 @@
       .flag.paper { background: rgba(148, 163, 184, 0.18); color: var(--muted); }
       .flag.auto { background: rgba(255, 45, 130, 0.16); color: var(--pink); }
       .fmeta { font-size: 0.78rem; color: var(--muted); padding-bottom: 0.15rem; }
+      .mission { padding: 0.45rem 0.5rem; border-bottom: 1px solid #ffffff10; }
+      .mission:last-child { border-bottom: 0; }
+      .mission.tap { cursor: pointer; border-radius: 0.6rem; transition: background 0.15s; }
+      .mission.tap:hover { background: rgba(0, 245, 255, 0.06); }
+      .replayhint { font-size: 0.62rem; color: var(--primary); opacity: 0.85; }
+      .lbrow { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid #ffffff10; font-size: 0.82rem; flex-wrap: wrap; }
+      .lbrow:last-child { border-bottom: 0; }
+      .lbrank { font-weight: 700; color: var(--primary); }
+      .lbname { font-weight: 600; }
+      .lbstat { font-size: 0.76rem; color: var(--text); font-variant-numeric: tabular-nums; }
+      .cedge { font-size: 0.66rem; font-weight: 700; color: var(--amber); background: rgba(245, 165, 36, 0.14); padding: 0.05rem 0.35rem; border-radius: 999px; }
+      .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(5, 8, 22, 0.78); backdrop-filter: blur(4px); display: flex; align-items: flex-end; justify-content: center; }
+      .overlay .sheet { width: 100%; max-width: 40rem; margin: 0 1rem; background: #0b1220; border: 1px solid var(--card-border); border-radius: 1rem 1rem 0 0; padding: 1rem 1.1rem calc(1.2rem + env(safe-area-inset-bottom)); max-height: 86vh; overflow: auto; box-shadow: 0 -20px 60px -20px rgba(0, 0, 0, 0.9); }
+      .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+      .replay-steps { display: grid; gap: 0.5rem; margin: 0.4rem 0 0.8rem; }
+      .rstep { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.55rem 0.7rem; border: 1px solid var(--card-border); border-radius: 0.6rem; background: rgba(5, 8, 22, 0.5); opacity: 0.25; transform: translateY(4px); transition: opacity 0.35s, transform 0.35s, border-color 0.35s; }
+      .rstep.on { opacity: 1; transform: none; border-color: rgba(0, 245, 255, 0.4); }
+      .rstep .ic { font-size: 1.1rem; flex: 0 0 auto; }
+      .rstep .rk { font-size: 0.7rem; color: var(--muted); }
+      .rstep .rv { font-weight: 600; font-variant-numeric: tabular-nums; }
       .flight .fsym { font-weight: 700; }
       .flight .fpnl { margin-left: auto; font-family: var(--font-mono); font-weight: 600; }
       .fhash { font-family: var(--font-mono); font-size: 0.6rem; color: var(--muted); padding-bottom: 0.5rem; border-bottom: 1px solid #ffffff14; }
@@ -433,6 +453,22 @@
         </div>
         <div class="card" id="status">Loading status…</div>
       </section>
+
+      <!-- COMMUNITY -->
+      <section id="view-community" class="hidden">
+        <div class="card">
+          <strong>👥 Community</strong>
+          <p style="margin:0.3rem 0 0.6rem">Proof real members make this work — by their own style. Probability, not signals. <b>Not financial advice.</b></p>
+          <div id="comm-summary" class="merkle"></div>
+          <label>🏆 Strategy leaderboard</label>
+          <div id="comm-strats">Loading…</div>
+        </div>
+        <div class="card">
+          <strong>🔥 Coins members are winning on</strong>
+          <p style="margin:0.3rem 0 0.6rem">⭐ = community edge (proven win-rate). A probability of past success, not a buy signal.</p>
+          <div id="comm-coins"></div>
+        </div>
+      </section>
     </main>
 
     <!-- bottom nav -->
@@ -449,10 +485,24 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></svg>
         Recorder
       </button>
+      <button data-view="community">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M2 21v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1"/><path d="M16 3.5a3 3 0 0 1 0 5.8M22 21v-1a5 5 0 0 0-3.5-4.7"/></svg>
+        Community
+      </button>
       <button data-view="settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.3l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2.3-1.3L14 3h-4l-.3 2.2A7 7 0 0 0 7.4 6.5l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .9.1 1.3l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2.3 1.3L10 21h4l.3-2.2a7 7 0 0 0 2.3-1.3l2.3 1 2-3.4-2-1.5c.1-.4.1-.9.1-1.3Z"/></svg>
         Settings
       </button>
+    </div>
+
+    <!-- Mission Replay overlay -->
+    <div id="replay" class="overlay hidden">
+      <div class="sheet">
+        <div class="sheet-head"><strong id="replay-title">Mission Replay</strong><button class="iconbtn" id="replay-close">✕</button></div>
+        <div id="replay-steps" class="replay-steps"></div>
+        <div class="actions"><button class="primary" id="replay-play">▶ Replay</button></div>
+        <div class="merkle" id="replay-hash"></div>
+      </div>
     </div>
 
     <script>
@@ -478,15 +528,17 @@
         const p = location.pathname.replace(/\/+$/, "");
         if (p === "" || p === "/home") return "home";
         if (p === "/history") return "history";
+        if (p === "/community") return "community";
         if (p === "/setting" || p === "/settings") return "settings";
         if (p === "/order" || p === "/orders") return "orders";
         return "home";
       }
       function showView(name) {
-        ["home", "orders", "history", "settings", "login"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== name));
+        ["home", "orders", "history", "community", "settings", "login"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== name));
         document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === name));
         if (name === "home") loadHome();
         if (name === "history") { loadRecorder(); loadHistory(); }
+        if (name === "community") loadLeaderboard();
         if (tgApp && tgApp.BackButton) { name === "home" || name === "login" ? tgApp.BackButton.hide() : tgApp.BackButton.show(); }
       }
       function navigate(view) {
@@ -531,6 +583,7 @@
         renderFavs();
         startPricePolling();
         loadGoalHistory();
+        loadLeaderboard();
         loadStatus();
         loadHome();
       }
@@ -743,7 +796,7 @@
           const cls = chg == null ? "" : chg >= 0 ? "up" : "down";
           const chgTxt = chg == null ? "" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%";
           const px = t ? `<div>${formatPrice(t.last_price)}</div><div class="chg ${cls}">${chgTxt}</div>` : "<div>…</div>";
-          return `<div class="fav"><span class="sym" data-coin="${s}">${s}</span><span class="px">${px}</span><button class="iconbtn" data-up="${i}" title="Move up">↑</button><button class="iconbtn" data-down="${i}" title="Move down">↓</button><button class="iconbtn" data-rm="${s}" title="Remove">✕</button></div>`;
+          return `<div class="fav"><span class="sym" data-coin="${s}">${s}${edgeBadge(s)}</span><span class="px">${px}</span><button class="iconbtn" data-up="${i}" title="Move up">↑</button><button class="iconbtn" data-down="${i}" title="Move down">↓</button><button class="iconbtn" data-rm="${s}" title="Remove">✕</button></div>`;
         }).join("");
         box.querySelectorAll("[data-coin]").forEach((b) => (b.onclick = () => loadIntoGoal(b.dataset.coin)));
         box.querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.up, -1)));
@@ -765,7 +818,7 @@
         coinTimer = setTimeout(async () => {
           const d = await (await fetch("/api/symbols?q=" + encodeURIComponent(q), { headers: authHeaders() })).json();
           const box = $("coinResults");
-          box.innerHTML = (d.symbols || []).slice(0, 16).map((s) => `<button class="chip" data-add="${s}">☆ ${s}</button>`).join("");
+          box.innerHTML = (d.symbols || []).slice(0, 16).map((s) => `<button class="chip" data-add="${s}">☆ ${s}${edgeBadge(s)}</button>`).join("");
           box.querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => addFav(b.dataset.add)));
         }, 250);
       });
@@ -842,19 +895,81 @@
             ? `<b>Merkle root</b> ${escapeHtml(root.slice(0, 40))}…<br/><span title="${escapeHtml(d.anchor_note || "")}">⛓ ${d.anchored ? "anchored on-chain" : "anchors on-chain at launch"}</span>`
             : "";
           const feed = d.entries || [];
+          recorderEntries = feed;
           $("rec-feed").innerHTML = feed.length
-            ? feed.map((e) => missionRow(e)).join("")
+            ? feed.map((e, i) => missionRow(e, i)).join("")
             : "<p style='font-size:0.85rem;color:#94A3B8'>No missions recorded yet — ANNY logs every decision here. Run a goal, or start a testnet campaign, to begin your record.</p>";
+          $("rec-feed").querySelectorAll("[data-mi]").forEach((el) => (el.onclick = () => openReplay(recorderEntries[+el.dataset.mi])));
         } catch (e) { $("rec-feed").textContent = "Could not load the recorder."; }
       }
-      function missionRow(e) {
+      function missionRow(e, i) {
         const when = new Date(e.at).toLocaleString();
         const pnl = Number(e.pnl) || 0;
         const lev = e.leverage ? " " + e.leverage + "x" : "";
         const auto = e.autonomous ? '<span class="flag auto">auto</span>' : "";
-        return `<div class="flight"><span class="fsym">Mission #${e.mission_no}</span><span class="flag ${escapeHtml(e.label)}">${escapeHtml(e.label)}</span>${auto}<span class="fpnl ${pnl >= 0 ? "up" : "down"}">${fmtPnl(e.pnl)}</span></div>`
+        return `<div class="mission tap" data-mi="${i}">`
+          + `<div class="flight"><span class="fsym">Mission #${e.mission_no}</span><span class="flag ${escapeHtml(e.label)}">${escapeHtml(e.label)}</span>${auto}<span class="fpnl ${pnl >= 0 ? "up" : "down"}">${fmtPnl(e.pnl)}</span></div>`
           + `<div class="fmeta">${escapeHtml(e.symbol)} · ${escapeHtml((e.side || e.action) + lev)}${e.reason ? " · " + escapeHtml(e.reason) : ""}</div>`
-          + `<div class="fhash">${escapeHtml((e.hash || "").slice(0, 20))}… · ${escapeHtml(when)}</div>`;
+          + `<div class="fhash">${escapeHtml((e.hash || "").slice(0, 20))}… · ${escapeHtml(when)} · <span class="replayhint">▶ replay</span></div>`
+          + `</div>`;
+      }
+
+      // ---- mission replay ----
+      let recorderEntries = [], replayTimer = null;
+      function replayStep(ic, k, v, cls) {
+        return `<div class="rstep"><span class="ic">${ic}</span><div><div class="rk">${escapeHtml(k)}</div><div class="rv ${cls || ""}">${escapeHtml(v)}</div></div></div>`;
+      }
+      function openReplay(e) {
+        if (!e) return;
+        const pnl = Number(e.pnl) || 0;
+        const steps = [];
+        steps.push(["🛰", "Signal", e.reason || (e.action + " · " + e.symbol)]);
+        if (e.side) steps.push(["🧭", "Direction", e.side.toUpperCase() + (e.leverage ? " " + e.leverage + "x" : "")]);
+        if (e.entry && Number(e.entry) > 0) steps.push(["🎯", "Entry", formatPrice(e.entry)]);
+        if (e.exit && Number(e.exit) > 0) steps.push(["🏁", "Exit", formatPrice(e.exit)]);
+        steps.push(["📊", "Result · " + e.label, fmtPnl(e.pnl) + (e.label === "paper" ? " USDT (paper)" : " USDT"), pnl >= 0 ? "up" : "down"]);
+        steps.push(["🔒", "Verified hash", (e.hash || "").slice(0, 32) + "…"]);
+        $("replay-title").textContent = "Mission #" + e.mission_no + " · Replay";
+        $("replay-steps").innerHTML = steps.map((s) => replayStep(s[0], s[1], s[2], s[3])).join("");
+        $("replay-hash").innerHTML = `<b>Tamper-evident</b> — this Mission's hash is part of the Flight Recorder Merkle root. Full telemetry (funding · OI · AI confidence) and on-chain proof land with the blockchain anchor.`;
+        $("replay").classList.remove("hidden");
+        playReplay();
+      }
+      function playReplay() {
+        if (replayTimer) clearInterval(replayTimer);
+        const steps = [...document.querySelectorAll("#replay-steps .rstep")];
+        steps.forEach((s) => s.classList.remove("on"));
+        let i = 0;
+        const tick = () => { if (i < steps.length) steps[i++].classList.add("on"); else clearInterval(replayTimer); };
+        tick();
+        replayTimer = setInterval(tick, 600);
+      }
+      $("replay-play").onclick = playReplay;
+      $("replay-close").onclick = () => { $("replay").classList.add("hidden"); if (replayTimer) clearInterval(replayTimer); };
+      $("replay").onclick = (e) => { if (e.target.id === "replay") $("replay-close").click(); };
+
+      // ---- community leaderboard + coin edges ----
+      let coinEdge = {};
+      async function loadLeaderboard() {
+        try {
+          const d = await (await fetch("/api/leaderboard", { headers: authHeaders() })).json();
+          coinEdge = {};
+          (d.coins || []).forEach((c) => (coinEdge[c.symbol] = c));
+          $("comm-summary").innerHTML = `<b>${d.total_runs || 0}</b> community missions analysed · paper-based · probability, not advice`;
+          const strats = d.strategies || [];
+          $("comm-strats").innerHTML = strats.length
+            ? strats.map((s, i) => `<div class="lbrow"><span class="lbrank">#${i + 1}</span><span class="lbname">${escapeHtml(s.name)}</span><span class="lbstat"><b class="${s.avg_profit_pct >= 0 ? "up" : "down"}">${s.avg_profit_pct >= 0 ? "+" : ""}${s.avg_profit_pct}%</b></span><span class="lbstat">${Math.round(s.win_rate)}% WR</span><span class="lbstat">Sharpe ${s.sharpe}</span><span class="lbstat" style="color:#94A3B8">${s.runs}r</span></div>`).join("")
+            : "<p style='font-size:0.85rem;color:#94A3B8'>No community data yet — run a goal to contribute the first mission.</p>";
+          const coins = d.coins || [];
+          $("comm-coins").innerHTML = coins.length
+            ? coins.map((c) => `<div class="fav"><span class="sym">${escapeHtml(c.symbol)}</span><span class="px"><div><span class="cedge">⭐ ${c.edge}%</span></div><div class="chg ${c.avg_profit_pct >= 0 ? "up" : "down"}">${c.avg_profit_pct >= 0 ? "+" : ""}${c.avg_profit_pct}% · ${c.runs}r</div></span></div>`).join("")
+            : "<p style='font-size:0.85rem;color:#94A3B8'>No coins yet.</p>";
+          renderFavs();
+        } catch (e) { $("comm-strats").textContent = "Could not load community stats."; }
+      }
+      function edgeBadge(sym) {
+        const c = coinEdge[normSym(sym)] || coinEdge[sym];
+        return c ? ` <span class="cedge">⭐${c.edge}%</span>` : "";
       }
 
       // ---- history ----

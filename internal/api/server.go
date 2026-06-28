@@ -193,6 +193,7 @@ func (s *Server) routes() {
 	s.app.Post("/api/goal/run", s.requireAuth, s.handleGoalRun)
 	s.app.Get("/api/goal/history", s.requireAuth, s.handleGoalHistory)
 	s.app.Get("/api/recorder", s.requireAuth, s.handleRecorder)
+	s.app.Get("/api/leaderboard", s.requireAuth, s.handleLeaderboard)
 	s.app.Get("/api/history", s.requireAuth, s.handleHistory)
 	s.app.Post("/api/credentials", s.requireAuth, s.handleStoreCredential)
 	s.app.Get("/api/credentials", s.requireAuth, s.handleGetCredential)

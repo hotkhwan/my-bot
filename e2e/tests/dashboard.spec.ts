@@ -99,6 +99,28 @@ test("flight recorder logs the paper run, labeled and hashed", async ({ page }) 
   await expect(page.locator("#rec-stats")).toContainText("Paper runs");
 });
 
+test("community leaderboard aggregates the run; mission replay opens", async ({ page }) => {
+  await registerAndLogin(page);
+  await gotoTrade(page);
+  await page.fill("#g-profit", "5");
+  await page.fill("#g-symbol", "BTC");
+  await page.click("#g-run");
+  await expect(page.locator("#g-stats")).toBeVisible({ timeout: 20_000 });
+
+  // Community tab aggregates the paper run by strategy + coin.
+  await page.click('#nav button[data-view="community"]');
+  await expect(page.locator("#view-community")).toBeVisible();
+  await expect(page.locator("#comm-strats")).toContainText("ema_cross");
+  await expect(page.locator("#comm-coins")).toContainText("BTCUSDT");
+
+  // Replay opens from a Mission in the Flight Recorder.
+  await page.click('#nav button[data-view="history"]');
+  await expect(page.locator("#view-history")).toBeVisible();
+  await page.click("#rec-feed .mission.tap");
+  await expect(page.locator("#replay")).toBeVisible();
+  await expect(page.locator("#replay-steps")).toContainText("Verified hash");
+});
+
 test("goal run with AI toggle falls back gracefully (no key configured)", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
