@@ -1095,18 +1095,44 @@
             ? coins.map((c) => `<div class="fav"><span class="sym">${escapeHtml(c.symbol)}</span><span class="px"><div><span class="cedge">⭐ ${c.edge}%</span></div><div class="chg ${c.avg_profit_pct >= 0 ? "up" : "down"}">${c.avg_profit_pct >= 0 ? "+" : ""}${c.avg_profit_pct}% · ${c.runs}r</div></span></div>`).join("")
             : "<p style='font-size:0.85rem;color:#94A3B8'>No coins yet.</p>";
           renderFavs();
-          renderReco(strats[0], coins[0], d.total_runs || 0);
+          renderReco(strats, coins, d.total_runs || 0);
         } catch (e) { $("comm-strats").textContent = "Could not load community stats."; }
       }
       const stratValue = { ema_cross: "ema", rsi_reversion: "rsi", macd: "macd", sma_cross: "sma", breakout: "breakout" };
-      function renderReco(topStrat, topCoin, totalRuns) {
+      const KNOWN_STRATS = ["ema_cross", "rsi_reversion", "macd", "sma_cross", "breakout"];
+      // Recommend only a community-PROVEN (green) strategy/coin. When nothing is
+      // green, don't push a money-loser — suggest exploring a strategy the crew
+      // hasn't tested yet (or the least-bad), and leave the coin open. Still
+      // backward-looking probability, never a "buy now" signal. Not advice.
+      function renderReco(strats, coins, totalRuns) {
         const box = $("g-reco");
-        if (!box || !topStrat || totalRuns < 1) { if (box) box.classList.add("hidden"); return; }
-        const sym = topCoin ? topCoin.symbol.replace(/USDT$/, "") : "";
-        box.innerHTML = `🤖 <b>ANNY recommends</b> ${escapeHtml(topStrat.name)}${sym ? " on " + escapeHtml(sym) : ""} <span style="color:var(--muted)">· from ${totalRuns} community missions · not advice</span> <button class="ghost" id="g-reco-apply">Apply</button>`;
+        if (!box) return;
+        if (totalRuns < 1) { box.classList.add("hidden"); return; }
+        strats = strats || []; coins = coins || [];
+        const byProfit = (a, b) => b.avg_profit_pct - a.avg_profit_pct;
+        const greenStrat = strats.filter((s) => s.avg_profit_pct > 0).sort(byProfit)[0];
+        let strat = null, explore = false;
+        if (greenStrat) {
+          strat = greenStrat.name;
+        } else {
+          const tried = new Set(strats.map((s) => s.name));
+          const untried = KNOWN_STRATS.filter((n) => !tried.has(n));
+          if (untried.length) { strat = untried[0]; explore = true; }          // never tested → go find an edge
+          else if (strats.length) { strat = strats.slice().sort(byProfit)[0].name; explore = true; } // all red → least-bad
+        }
+        if (!strat) { box.classList.add("hidden"); return; }
+        // Pin a coin only when it's proven green; otherwise leave it to the user.
+        const greenCoin = coins.filter((c) => c.avg_profit_pct > 0).sort(byProfit)[0];
+        const sym = greenCoin ? greenCoin.symbol.replace(/USDT$/, "") : "";
+        const onSym = sym ? " on " + escapeHtml(sym) : "";
+        if (explore) {
+          box.innerHTML = `🤖 <b>ANNY suggests trying</b> ${escapeHtml(strat)}${onSym} <span style="color:var(--muted)">· no proven edge yet — help find one · not advice</span> <button class="ghost" id="g-reco-apply">Apply</button>`;
+        } else {
+          box.innerHTML = `🤖 <b>ANNY recommends</b> ${escapeHtml(strat)}${onSym} <span style="color:var(--muted)">· community-green · from ${totalRuns} missions · not advice</span> <button class="ghost" id="g-reco-apply">Apply</button>`;
+        }
         box.classList.remove("hidden");
         $("g-reco-apply").onclick = () => {
-          $("g-strategy").value = stratValue[topStrat.name] || "ema";
+          $("g-strategy").value = stratValue[strat] || "ema";
           if (sym) $("g-symbol").value = sym;
         };
       }
