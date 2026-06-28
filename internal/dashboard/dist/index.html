@@ -78,7 +78,7 @@
       .appbar .spacer { flex: 1; }
       .greeting { font-family: var(--font-head); font-size: 0.92rem; color: var(--text); margin: 0.1rem 0 0.2rem; }
       .greeting span { color: var(--primary); }
-      .ver { font-family: var(--font-mono); font-size: 0.7rem; color: var(--muted); margin: 0 0 0.6rem; letter-spacing: 0.3px; }
+      .ver { font-family: var(--font-mono); font-size: 0.62rem; font-weight: 500; color: var(--muted); letter-spacing: 0.3px; -webkit-text-fill-color: var(--muted); vertical-align: middle; }
       .who { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; color: var(--muted); }
       .who img { width: 1.9rem; height: 1.9rem; border-radius: 50%; object-fit: cover; border: 1px solid var(--card-border); }
 
@@ -291,7 +291,7 @@
             <path d="M27 42 Q32 46 37 42" stroke="#00F5FF" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.85"/>
           </svg>
           <div>
-            <div class="word">ANNY</div>
+            <div class="word">ANNY <span class="ver" id="brand-ver"></span></div>
             <div class="sub">AI Trading Companion</div>
           </div>
         </div>
@@ -303,7 +303,6 @@
       <!-- HOME -->
       <section id="view-home" class="hidden">
         <p class="greeting" id="home-greeting">Good evening, Captain 👋</p>
-        <div class="ver" id="home-ver"></div>
         <div class="hero">
           <div class="hlabel">Today's Profit</div>
           <div class="hnum mono pos" id="home-pnl">—</div>
@@ -429,16 +428,16 @@
       <!-- HISTORY -->
       <section id="view-history" class="hidden">
         <div class="card">
+          <strong>Performance</strong>
+          <p style="margin:0.3rem 0 0.6rem">Across all your paper goal runs.</p>
+          <div id="report" class="statgrid">Loading…</div>
+        </div>
+        <div class="card">
           <strong>🛰 Flight Recorder</strong>
           <p style="margin:0.3rem 0 0.6rem">Every decision ANNY made for you — logged, hashed, never rewritten.</p>
           <div id="rec-stats" class="statgrid"></div>
           <div id="rec-merkle" class="merkle"></div>
           <div id="rec-feed">Loading…</div>
-        </div>
-        <div class="card">
-          <strong>Performance</strong>
-          <p style="margin:0.3rem 0 0.6rem">Across all your paper goal runs.</p>
-          <div id="report">Loading…</div>
         </div>
         <div class="card">
           <strong>By coin</strong>
@@ -457,9 +456,9 @@
       <section id="view-settings" class="hidden">
         <div class="card">
           <strong>Binance API keys</strong>
-          <p style="margin:0.3rem 0 0.6rem">Add profiles (testnet, live) and pick the active one. Enable <b>Futures</b>, disable <b>Withdrawals</b>.</p>
+          <p style="margin:0.3rem 0 0.6rem">Add profiles (testnet, live) and pick the active one. Tick only <b>Enable Reading</b> + <b>Enable Futures</b> — leave Withdrawals and everything else off.</p>
           <div class="chips" style="margin-bottom:0.7rem">
-            <a class="chip" href="https://testnet.binancefuture.com/" target="_blank" rel="noopener">➕ Create demo (testnet) API key ↗</a>
+            <a class="chip" href="https://demo.binance.com/en/my/settings/api-management" target="_blank" rel="noopener">➕ Create demo (testnet) API key ↗</a>
             <a class="chip" href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noopener">Create live API key ↗</a>
           </div>
           <div id="profiles"></div>
@@ -544,8 +543,9 @@
     <div id="replay" class="overlay hidden">
       <div class="sheet">
         <div class="sheet-head"><strong id="replay-title">Mission Replay</strong><button class="iconbtn" id="replay-close">✕</button></div>
+        <p style="margin:0 0 0.7rem;font-size:0.8rem;color:var(--muted)">A step-by-step recap of exactly how ANNY reached this decision — signal → direction → entry/exit → result → the tamper-proof hash. Proof, not a redo.</p>
         <div id="replay-steps" class="replay-steps"></div>
-        <div class="actions"><button class="primary" id="replay-play">▶ Replay</button></div>
+        <div class="actions"><button class="primary" id="replay-play">▶ Play again</button></div>
         <div class="merkle" id="replay-hash"></div>
       </div>
     </div>
@@ -617,8 +617,8 @@
         loadAdminPending();
       }
       function renderVersion() {
-        const box = $("home-ver"); if (!box) return;
-        box.textContent = me && me.version ? "ANNY v" + me.version : "";
+        const box = $("brand-ver"); if (!box) return;
+        box.textContent = me && me.version ? "v" + me.version : "";
       }
       function renderTier() {
         renderVersion();
@@ -815,8 +815,16 @@
       function renderKeyHint(list) {
         const box = $("g-keyhint"); if (!box) return;
         const hasActive = (list || []).some((p) => p.active);
+        const live = $("g-live");
+        // The live Mission needs an active key — disable the button until there is
+        // one, so it's clear (not just a banner) that paper is all you can run.
+        if (live) {
+          live.disabled = !hasActive;
+          live.style.opacity = hasActive ? "" : "0.5";
+          live.title = hasActive ? "" : "Add & activate a Binance key in Settings first";
+        }
         if (hasActive) { box.classList.add("hidden"); box.innerHTML = ""; return; }
-        box.innerHTML = `🔑 <b>No Binance key yet.</b> Paper runs work without one — but a live Mission needs an active key. <button class="ghost" id="g-keyhint-go" type="button" style="width:auto;padding:0.25rem 0.65rem;margin-left:auto">Set up a key →</button>`;
+        box.innerHTML = `🔑 <b>No Binance key yet.</b> Paper runs work without one — the live Mission button is locked until you add an active key. <button class="ghost" id="g-keyhint-go" type="button" style="width:auto;padding:0.25rem 0.65rem;margin-left:auto">Set up a key →</button>`;
         box.classList.remove("hidden");
         const go = $("g-keyhint-go"); if (go) go.onclick = () => navigate("settings");
       }
@@ -1190,7 +1198,7 @@
           histRuns = d.runs || [];
         } catch (e) { $("report").textContent = "Could not load history."; $("bycoin").textContent = ""; $("g-runs").textContent = ""; return; }
         if (!histRuns.length) {
-          $("report").innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No runs yet — run a Goal to start your record.</p>';
+          $("report").innerHTML = '<p style="font-size:0.85rem;color:#94A3B8;grid-column:1/-1">No runs yet — run a Goal to start your record.</p>';
           $("bycoin").innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No data yet.</p>';
           $("g-runs").innerHTML = ""; return;
         }
@@ -1206,9 +1214,9 @@
         });
         const wr = (wins + losses) ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0;
         $("report").innerHTML = [
-          ["Runs", histRuns.length], ["Trades", trades], ["Win rate", wr + "%"],
-          ["Total PnL", fmtPnl(pnl) + " USDT"], ["Avg / run", fmtPnl(pnl / histRuns.length) + " USDT"], ["Wins / Losses", wins + " / " + losses],
-        ].map(([k, v]) => `<div class="row"><span>${k}</span><strong>${v}</strong></div>`).join("");
+          ["Runs", histRuns.length, ""], ["Trades", trades, ""], ["Win rate", wr + "%", ""],
+          ["Total PnL", fmtPnl(pnl), pnl >= 0 ? "up" : "down"], ["Avg / run", fmtPnl(pnl / histRuns.length), pnl >= 0 ? "up" : "down"], ["Wins / Losses", wins + " / " + losses, ""],
+        ].map(([k, v, cls]) => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${escapeHtml(String(v))}</div></div>`).join("");
         // By coin, best PnL first.
         const keys = Object.keys(byc).sort((a, b) => byc[b].pnl - byc[a].pnl);
         $("bycoin").innerHTML = keys.map((s) => {
