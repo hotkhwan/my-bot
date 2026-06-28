@@ -171,17 +171,25 @@ func (h *Handler) Handle(ctx context.Context, sender Sender, update *models.Upda
 	}
 
 	userID := message.From.ID
-	if !h.isAllowed(userID) {
-		h.logger.Warn("telegram message rejected by allowlist", "user_id", userID, "chat_id", message.Chat.ID)
-		return nil
-	}
-
 	text := strings.TrimSpace(message.Text)
 	if text == "" {
 		return nil
 	}
-
 	command := commandName(text)
+
+	// New / non-allowlisted users can still onboard: /start, /app and /help send
+	// them to the web app, where they register and request crew access for the
+	// admin to approve. Every other command stays gated.
+	if !h.isAllowed(userID) {
+		if command != "/start" && command != "/app" && command != "/help" {
+			h.logger.Info("telegram non-member directed to onboarding", "user_id", userID, "chat_id", message.Chat.ID)
+			if h.webAppURL != "" {
+				return h.sendWithKeyboard(ctx, sender, message.Chat.ID, OnboardText, webAppKeyboard(h.webAppURL))
+			}
+			return h.sendText(ctx, sender, message.Chat.ID, OnboardText)
+		}
+	}
+
 	switch command {
 	case "/start", "/app":
 		if h.webAppURL != "" {

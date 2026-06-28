@@ -23,13 +23,13 @@ func TestHandlerRejectsUnauthorizedUser(t *testing.T) {
 	handler := NewHandler(12345, nil, testLogger())
 	sender := &fakeSender{}
 
-	err := handler.Handle(context.Background(), sender, textUpdate(999, 111, "/start"))
+	// A non-member's gated command is never executed — they get onboarded instead.
+	err := handler.Handle(context.Background(), sender, textUpdate(999, 111, "/status"))
 	if err != nil {
 		t.Fatalf("Handle returned error: %v", err)
 	}
-
-	if len(sender.messages) != 0 {
-		t.Fatalf("sent messages = %d, want 0", len(sender.messages))
+	if !strings.Contains(sender.singleMessage(t).Text, "Request access") {
+		t.Fatalf("unauthorized user should be onboarded, got %q", sender.singleMessage(t).Text)
 	}
 }
 
@@ -204,15 +204,34 @@ func (f *fakeCrew) SetTier(_ context.Context, subject, tier string) error {
 	return nil
 }
 
+func TestNonMemberCanStartToOnboard(t *testing.T) {
+	handler := NewHandler(12345, nil, testLogger()) // admin 12345; user 999 not allowlisted
+	// /start works for anyone so a new user can reach the app and request access.
+	s := &fakeSender{}
+	if err := handler.Handle(context.Background(), s, textUpdate(999, 111, "/start")); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if len(s.messages) != 1 {
+		t.Fatalf("/start should reply to a new user, got %d msgs", len(s.messages))
+	}
+	// A trading command from the same non-member is NOT executed — it onboards.
+	s2 := &fakeSender{}
+	_ = handler.Handle(context.Background(), s2, textUpdate(999, 111, "market BTC"))
+	if !strings.Contains(s2.singleMessage(t).Text, "Request access") {
+		t.Fatalf("non-member trading command should onboard, got %q", s2.singleMessage(t).Text)
+	}
+}
+
 func TestHandlerCrewApproval(t *testing.T) {
 	crew := &fakeCrew{pending: []CrewMember{{Subject: "tg:999", Name: "newbie"}}}
 	handler := NewHandler(12345, nil, testLogger()).WithCrew(crew) // admin = 12345
 
-	// Non-admin is refused.
+	// A non-member calling an admin command is not served it — instead they get
+	// nudged to onboard (register + request access) via the web app.
 	s0 := &fakeSender{}
 	_ = handler.Handle(context.Background(), s0, textUpdate(999, 111, "/pending"))
-	if len(s0.messages) != 0 {
-		t.Fatalf("non-admin should be ignored by allowlist (got %d msgs)", len(s0.messages))
+	if len(s0.messages) != 1 || !strings.Contains(s0.singleMessage(t).Text, "Request access") {
+		t.Fatalf("non-member should get the onboarding nudge, got %d msgs", len(s0.messages))
 	}
 
 	// Admin lists pending.
@@ -247,11 +266,14 @@ func TestHandlerCrewApproval(t *testing.T) {
 	if !strings.Contains(s4.singleMessage(t).Text, "free, captain, or commander") {
 		t.Fatalf("bad tier msg = %q", s4.singleMessage(t).Text)
 	}
-	// Non-admin cannot set tiers.
+	// A non-member calling /tier is onboarded, not served the admin command.
 	s5 := &fakeSender{}
 	_ = handler.Handle(context.Background(), s5, textUpdate(999, 111, "/tier 999 commander"))
-	if len(s5.messages) != 0 {
-		t.Fatalf("non-admin /tier should be ignored (got %d msgs)", len(s5.messages))
+	if !strings.Contains(s5.singleMessage(t).Text, "Request access") {
+		t.Fatalf("non-member /tier should onboard, got %q", s5.singleMessage(t).Text)
+	}
+	if crew.tiers["tg:999"] == "commander" {
+		t.Fatalf("non-member must not have changed a tier: %v", crew.tiers)
 	}
 }
 

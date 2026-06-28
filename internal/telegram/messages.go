@@ -2,6 +2,10 @@ package telegram
 
 const StartText = "🤖 ANNY is online.\n\nTap “Open ANNY” to launch the app right here in Telegram — every trade and result is logged in your Flight Recorder.\n\nDry-run and Binance testnet are on by default. Use /help for the command grammar, or /app to reopen the dashboard."
 
+// OnboardText greets a not-yet-approved user and points them to the web app to
+// register and request crew access (the admin approves from /pending).
+const OnboardText = "👋 Welcome to ANNY — your Transparent AI Trading Companion.\n\nYou're not on the crew yet. Tap “Open ANNY” below, sign in, and press “Request access”. An admin will approve you, then every command unlocks here in Telegram."
+
 const HelpText = `Phase 1 commands:
 
 Open the app (Telegram Mini App):
