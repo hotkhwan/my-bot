@@ -20,6 +20,9 @@ primary_region = "sin" # Singapore: close to Binance + Thailand
   # Live-positions feed populate. It can never touch a real-money account here.
   DRY_RUN = "false"
   BINANCE_TESTNET = "true"
+  # Futures REST host. Must match the testnet, and the API key must be created at
+  # testnet.binancefuture.com (a separate portal — keys only auth against this host).
+  BINANCE_FUTURES_BASE_URL = "https://testnet.binancefuture.com"
   REAL_TRADING_ENABLED = "false"
   # Lets the autonomous /campaign engine execute — still testnet-only, gated by the
   # two flags above at runtime.

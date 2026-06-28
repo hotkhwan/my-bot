@@ -402,6 +402,11 @@
             <button class="ghost" id="g-live" type="button" style="border:1px solid var(--card-border)">🚀 Run live Mission (testnet) — places a real order on your active key, after Confirm</button>
             <div id="g-keyhint" class="reco hidden" style="margin-top:0.5rem"></div>
             <div class="msg" id="g-msg"></div>
+            <pre id="g-confirm-out" class="output hidden" style="margin-top:0.6rem"></pre>
+            <div id="g-confirm-actions" class="actions hidden">
+              <button class="primary" id="g-confirm-yes">Confirm — place order</button>
+              <button class="ghost" id="g-confirm-no">Cancel</button>
+            </div>
           </div>
           <div id="g-card" class="bcard hidden">
             <div class="bcard-top">
@@ -493,9 +498,9 @@
       <section id="view-settings" class="hidden">
         <div class="card">
           <strong>Binance API keys</strong>
-          <p style="margin:0.3rem 0 0.6rem">Add profiles (testnet, live) and pick the active one. Tick only <b>Enable Reading</b> + <b>Enable Futures</b> — leave Withdrawals and everything else off.</p>
+          <p style="margin:0.3rem 0 0.6rem">Add profiles (testnet, live) and pick the active one. Tick only <b>Enable Reading</b> + <b>Enable Futures</b> — leave Withdrawals and everything else off. <b>Testnet keys must be created at testnet.binancefuture.com</b> (a separate portal — log in there, then API Key).</p>
           <div class="chips" style="margin-bottom:0.7rem">
-            <a class="chip" href="https://demo.binance.com/en/my/settings/api-management" target="_blank" rel="noopener">➕ Create demo (testnet) API key ↗</a>
+            <a class="chip" href="https://testnet.binancefuture.com/" target="_blank" rel="noopener">➕ Create testnet API key ↗</a>
             <a class="chip" href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noopener">Create live API key ↗</a>
           </div>
           <div id="profiles"></div>
@@ -1090,15 +1095,31 @@
           const d = await r.json().catch(() => ({}));
           if (!r.ok) { goalMsg(d.error || `Failed (${r.status})`); return; }
           goalMsg("");
-          cmdOut.textContent = d.output || ""; cmdSpark.innerHTML = "";
           if (d.need_key) { goalMsg("Add & activate a Binance key in Settings first."); navigate("settings"); return; }
-          if (d.confirm_id) { pendingConfirmId = d.confirm_id; cmdConfirm.classList.remove("hidden"); }
-          else cmdConfirm.classList.add("hidden");
-          $("cmd-out").scrollIntoView({ behavior: "smooth", block: "center" });
+          // Show the order + Confirm right here under the button, not in the chat box.
+          $("g-confirm-out").textContent = d.output || ""; $("g-confirm-out").classList.remove("hidden");
+          if (d.confirm_id) { missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); }
+          else $("g-confirm-actions").classList.add("hidden");
+          $("g-confirm-out").scrollIntoView({ behavior: "smooth", block: "center" });
         } catch (e) { goalMsg("Network error"); }
         finally { $("g-live").disabled = false; }
       }
       $("g-live").onclick = runLiveMission;
+      // Live-mission confirm flow, inline under the buttons.
+      let missionConfirmId = null;
+      async function resolveMission(cancel) {
+        if (!missionConfirmId) return;
+        const id = missionConfirmId; missionConfirmId = null;
+        $("g-confirm-actions").classList.add("hidden");
+        $("g-confirm-out").textContent = cancel ? "Cancelling…" : "Placing order on your active key…";
+        try {
+          const d = await (await fetch("/api/confirm", { method: "POST", headers: authHeaders(), body: JSON.stringify({ id, cancel }) })).json();
+          $("g-confirm-out").textContent = d.output || d.error || "Done.";
+          if (!cancel) loadGoalHistory();
+        } catch (e) { $("g-confirm-out").textContent = "Network error"; }
+      }
+      $("g-confirm-yes").onclick = () => resolveMission(false);
+      $("g-confirm-no").onclick = () => resolveMission(true);
       async function loadGoalHistory() {
         try {
           const d = await (await fetch("/api/goal/history", { headers: authHeaders() })).json();

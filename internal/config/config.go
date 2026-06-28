@@ -258,6 +258,16 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.Binance.APISecret = reader.string("BINANCE_API_SECRET", cfg.Binance.APISecret)
 	cfg.Binance.Testnet = reader.bool("BINANCE_TESTNET", cfg.Binance.Testnet)
 	cfg.Binance.FuturesBaseURL = reader.string("BINANCE_FUTURES_BASE_URL", cfg.Binance.FuturesBaseURL)
+	// Default the futures REST host to match the testnet/live mode, so live orders
+	// don't fail with "BINANCE_FUTURES_BASE_URL is required". Testnet keys only
+	// authenticate against the testnet host, so the two must always agree.
+	if cfg.Binance.FuturesBaseURL == "" {
+		if cfg.Binance.Testnet {
+			cfg.Binance.FuturesBaseURL = "https://testnet.binancefuture.com"
+		} else {
+			cfg.Binance.FuturesBaseURL = "https://fapi.binance.com"
+		}
+	}
 	cfg.Binance.RequestTimeout = reader.seconds("BINANCE_REQUEST_TIMEOUT_SECONDS", cfg.Binance.RequestTimeout)
 	cfg.Binance.ExchangeInfoCacheTTL = reader.seconds("EXCHANGE_INFO_CACHE_TTL_SECONDS", cfg.Binance.ExchangeInfoCacheTTL)
 
