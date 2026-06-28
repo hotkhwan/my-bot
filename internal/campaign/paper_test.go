@@ -94,10 +94,35 @@ func TestRunPaperDowntrendShortsWin(t *testing.T) {
 	}
 }
 
+func TestAdaptiveStopScalesWithVolatility(t *testing.T) {
+	volCandles := func(rangePct float64, n int) []marketdata.Candle {
+		out := make([]marketdata.Candle, n)
+		for i := range out {
+			out[i] = marketdata.Candle{Open: 100, Close: 100, High: 100 * (1 + rangePct/2), Low: 100 * (1 - rangePct/2), Volume: 1}
+		}
+		return out
+	}
+	cfg := PaperConfig{AtrLookback: 14, AtrStopMult: 1.5, MinStopPct: 0.005, MaxStopPct: 0.06}
+	calm := stopPct(cfg, volCandles(0.004, 30), 20) // 0.4% bars → ~0.6% stop
+	wild := stopPct(cfg, volCandles(0.02, 30), 20)  // 2% bars → ~3% stop
+	if !(wild > calm) {
+		t.Fatalf("stop should widen with volatility: wild=%.4f calm=%.4f", wild, calm)
+	}
+	if calm < cfg.MinStopPct || wild > cfg.MaxStopPct {
+		t.Fatalf("stops out of clamp: calm=%.4f wild=%.4f", calm, wild)
+	}
+	// A fixed override ignores volatility.
+	if got := stopPct(PaperConfig{StopLossPct: 0.01}, volCandles(0.05, 30), 20); got != 0.01 {
+		t.Fatalf("fixed override = %.4f, want 0.01", got)
+	}
+}
+
 func TestRunPaperTimeoutBooksClampedLoss(t *testing.T) {
 	goal, _ := ParseGoal("goal profit 50 capital 100")
-	// Rise to establish an EMA long, then go flat: long entries time out without
-	// hitting either level, so they close at ~entry for a small fee-only loss.
+	// Rise to establish an EMA long, then go flat: long entries time out. A timeout
+	// books the realized move clamped to the bracket — never a gain beyond reward
+	// (2) nor a loss beyond risk (1) plus the round-trip fee — which is the
+	// invariant this test guards (it stays true under the adaptive stop).
 	candles := make([]marketdata.Candle, 0, 90)
 	price := 100.0
 	for i := 0; i < 50; i++ {
@@ -112,14 +137,17 @@ func TestRunPaperTimeoutBooksClampedLoss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPaper: %v", err)
 	}
+	maxGain, _ := decimal.Parse("2")    // = reward
+	maxLoss, _ := decimal.Parse("-1.2") // = -risk minus a generous fee allowance
 	var sawTimeout bool
 	for _, tr := range res.Trades {
 		if tr.Outcome == "timeout" {
 			sawTimeout = true
-			// Clamped to bracket economics: never a gain beyond reward nor a loss
-			// beyond risk. Here the flat close means a tiny fee-only loss.
-			if tr.PnLUSDT.IsPositive() {
-				t.Fatalf("flat timeout should not be a win: %s", tr.PnLUSDT)
+			if tr.PnLUSDT.Cmp(maxGain) > 0 {
+				t.Fatalf("timeout gain exceeds reward (clamp broken): %s", tr.PnLUSDT)
+			}
+			if tr.PnLUSDT.Cmp(maxLoss) < 0 {
+				t.Fatalf("timeout loss exceeds risk+fee (clamp broken): %s", tr.PnLUSDT)
 			}
 		}
 	}

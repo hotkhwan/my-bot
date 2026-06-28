@@ -391,7 +391,7 @@
             </div>
             <div class="grid2">
               <div><label for="g-risk">Max risk (% of capital)</label><input id="g-risk" inputmode="numeric" placeholder="30" value="30" autocomplete="off" /></div>
-              <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· pick a favourite</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC — or ★ a coin below" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist></div>
+              <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· type or tap a favourite</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC — or tap a favourite below" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist><div id="g-favchips" class="chips" style="margin-top:0.4rem"></div></div>
             </div>
             <div class="grid2">
               <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
@@ -996,9 +996,14 @@
         box.querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.up, -1)));
         box.querySelectorAll("[data-down]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.down, 1)));
         box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => removeFav(b.dataset.rm)));
-        // Feed favourites into the Goal symbol dropdown.
+        // Feed favourites into the Goal symbol dropdown + clickable chips.
         const dl = $("g-favlist");
         if (dl) dl.innerHTML = f.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("");
+        const chips = $("g-favchips");
+        if (chips) {
+          chips.innerHTML = f.map((s) => `<button type="button" class="chip" data-pick="${escapeHtml(s)}">${escapeHtml(String(s).replace(/USDT$/, ""))}${edgeBadge(s)}</button>`).join("");
+          chips.querySelectorAll("[data-pick]").forEach((b) => (b.onclick = () => { $("g-symbol").value = String(b.dataset.pick).replace(/USDT$/, ""); }));
+        }
       }
       // Tapping a favourite loads it into the Goal form's symbol.
       function loadIntoGoal(coin) {

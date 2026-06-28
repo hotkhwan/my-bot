@@ -35,10 +35,19 @@ type PaperConfig struct {
 	Symbol      string
 	Strategy    string    // "ema" or "rsi"; defaults to "ema"
 	Bias        PaperBias // restrict direction (AI lean); defaults to both
-	StopLossPct float64   // SL distance as fraction of entry; default 0.01 (1%)
-	FeeRate     float64   // per-side taker fee fraction; default 0.0004 (0.04%)
-	MaxHoldBars int       // force-close after N bars if neither level hits; default 24
-	WarmupBars  int       // bars before the first trade is allowed; default 30
+	StopLossPct float64   // FIXED SL distance as fraction of entry; when >0 it
+	// overrides the adaptive stop. Default 0 → ATR-adaptive (below).
+	FeeRate     float64 // per-side taker fee fraction; default 0.0004 (0.04%)
+	MaxHoldBars int     // force-close after N bars if neither level hits; default 24
+	WarmupBars  int     // bars before the first trade is allowed; default 30
+	// Adaptive stop: the stop distance is AtrStopMult × recent ATR% (clamped to
+	// [MinStopPct, MaxStopPct]), so a 1% move on 1m and on 1d aren't treated the
+	// same — a fixed % stop is pure noise on higher timeframes and stops out before
+	// the target, which is what made every timeframe lose. Zero values default.
+	AtrLookback int     // bars of volatility to average; default 14
+	AtrStopMult float64 // stop = mult × ATR%; default 1.5
+	MinStopPct  float64 // stop floor; default 0.005 (0.5%)
+	MaxStopPct  float64 // stop cap; default 0.06 (6%)
 }
 
 // PaperTrade is one resolved paper trade.
@@ -97,8 +106,20 @@ func StrategyFor(name string) backtest.Strategy {
 // deterministic given the candles, so it is fully testable offline.
 func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error) {
 	strat := StrategyFor(cfg.Strategy)
-	if cfg.StopLossPct <= 0 {
-		cfg.StopLossPct = 0.01
+	if cfg.StopLossPct < 0 {
+		cfg.StopLossPct = 0 // negative is meaningless; fall through to adaptive
+	}
+	if cfg.AtrLookback <= 0 {
+		cfg.AtrLookback = 14
+	}
+	if cfg.AtrStopMult <= 0 {
+		cfg.AtrStopMult = 1.5
+	}
+	if cfg.MinStopPct <= 0 {
+		cfg.MinStopPct = 0.005
+	}
+	if cfg.MaxStopPct <= 0 {
+		cfg.MaxStopPct = 0.06
 	}
 	if cfg.FeeRate < 0 {
 		cfg.FeeRate = 0
@@ -131,12 +152,6 @@ func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error)
 	if rr <= 0 || !finite(rr) {
 		rr = 2
 	}
-	// Notional is sized so a full stop-out loses one RiskPerTradeUSDT.
-	notional := risk / cfg.StopLossPct
-	if !finite(notional) || notional <= 0 {
-		return PaperResult{}, fmt.Errorf("paper: position sizing is invalid")
-	}
-	feeCost := cfg.FeeRate * notional * 2 // entry + exit
 
 	result := PaperResult{
 		Goal:     cfg.Goal,
@@ -166,7 +181,17 @@ func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error)
 		}
 
 		entry := candles[i].Close
-		sl, tp := bracket(side, entry, cfg.StopLossPct, rr)
+		// Per-trade stop distance, sized to this window's volatility. Notional is
+		// then sized so a full stop-out still loses exactly one RiskPerTradeUSDT,
+		// keeping the goal's $-economics fixed while the price brackets adapt.
+		slPct := stopPct(cfg, candles, i)
+		notional := risk / slPct
+		if !finite(notional) || notional <= 0 {
+			i++
+			continue
+		}
+		feeCost := cfg.FeeRate * notional * 2 // entry + exit
+		sl, tp := bracket(side, entry, slPct, rr)
 		exitPrice, outcome, exitIdx := resolve(side, sl, tp, candles, i+1, cfg.MaxHoldBars)
 
 		var pnl float64
@@ -255,6 +280,58 @@ func resolve(side string, sl, tp float64, candles []marketdata.Candle, from, max
 		}
 	}
 	return candles[last].Close, "timeout", last
+}
+
+// stopPct returns the stop distance (fraction of entry) for the trade opening at
+// candle idx. A fixed StopLossPct overrides; otherwise it is AtrStopMult × the
+// recent ATR%, clamped to [MinStopPct, MaxStopPct]. This makes the stop track the
+// timeframe's real volatility instead of a one-size 1% that whipsaws on 4h/1d.
+func stopPct(cfg PaperConfig, candles []marketdata.Candle, idx int) float64 {
+	if cfg.StopLossPct > 0 {
+		return cfg.StopLossPct
+	}
+	v := atrPct(candles, idx, cfg.AtrLookback)
+	sl := cfg.AtrStopMult * v
+	if sl < cfg.MinStopPct {
+		sl = cfg.MinStopPct
+	}
+	if sl > cfg.MaxStopPct {
+		sl = cfg.MaxStopPct
+	}
+	return sl
+}
+
+// atrPct is the average true range over the last `lookback` bars up to idx,
+// expressed as a fraction of price — a volatility estimate that includes gaps.
+func atrPct(candles []marketdata.Candle, idx, lookback int) float64 {
+	if lookback < 1 {
+		lookback = 14
+	}
+	start := idx - lookback + 1
+	if start < 1 {
+		start = 1
+	}
+	var sum float64
+	var n int
+	for j := start; j <= idx && j < len(candles); j++ {
+		c := candles[j]
+		tr := c.High - c.Low
+		prevClose := candles[j-1].Close
+		if d := math.Abs(c.High - prevClose); d > tr {
+			tr = d
+		}
+		if d := math.Abs(c.Low - prevClose); d > tr {
+			tr = d
+		}
+		if c.Close > 0 {
+			sum += tr / c.Close
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / float64(n)
 }
 
 // bracket returns the stop-loss and take-profit prices for a side, given the
