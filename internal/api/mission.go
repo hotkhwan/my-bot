@@ -23,9 +23,26 @@ import (
 
 const (
 	missionSLPct       = 0.01 // stop distance as a fraction of entry
-	missionLeverage    = 3
-	missionMaxSizeUSDT = 200 // hard cap on notional so a mission can't go large
+	missionLeverage    = 3    // fallback when no risk% is given
+	missionMaxLeverage = 100  // testnet cap (BTC testnet allows up to 125x)
+	missionMaxSizeUSDT = 200  // hard cap on notional so a mission can't go large
 )
+
+// missionLeverageFor maps the Goal's "Max risk (% of capital)" to leverage —
+// 30% → 30x, 100% → 100x — clamped to [1, missionMaxLeverage]. Testnet only.
+func missionLeverageFor(riskPct int) int {
+	lev := riskPct
+	if lev <= 0 {
+		lev = missionLeverage
+	}
+	if lev > missionMaxLeverage {
+		lev = missionMaxLeverage
+	}
+	if lev < 1 {
+		lev = 1
+	}
+	return lev
+}
 
 func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	if s.orders == nil {
@@ -94,19 +111,22 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	entry := candles[len(candles)-1].Close
 	sl, tp := missionBracket(side, entry)
 	size := missionSize(req.Capital)
+	leverage := missionLeverageFor(req.Risk)
 
 	decision := signals.Decision{
 		Action:     signals.ActionOpen,
 		Symbol:     symbol,
 		Side:       side,
-		Leverage:   missionLeverage,
+		Leverage:   leverage,
 		Entry:      trimPrice(entry),
 		StopLoss:   trimPrice(sl),
 		TakeProfit: trimPrice(tp),
 		SizeUSDT:   strconv.FormatFloat(size, 'f', 2, 64),
 		Reason:     reason,
 	}
-	intent, err := signals.DecisionToIntent(decision, s.cfg.App.MaxLeverage)
+	// Missions cap leverage at missionMaxLeverage (testnet), independent of the
+	// global MaxLeverage knob used for chat-driven trades.
+	intent, err := signals.DecisionToIntent(decision, missionMaxLeverage)
 	if err != nil {
 		return c.JSON(fiber.Map{"output": "⚠️ Could not build the mission: " + err.Error()})
 	}

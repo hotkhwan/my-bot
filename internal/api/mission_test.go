@@ -99,3 +99,14 @@ func TestMissionGated(t *testing.T) {
 		t.Fatalf("password user (open) = %q, want Telegram-login required", got)
 	}
 }
+
+func TestMissionLeverageFromRisk(t *testing.T) {
+	cases := []struct{ risk, want int }{
+		{30, 30}, {100, 100}, {0, 3}, {-5, 3}, {250, 100}, {1, 1},
+	}
+	for _, c := range cases {
+		if got := missionLeverageFor(c.risk); got != c.want {
+			t.Errorf("missionLeverageFor(%d) = %d, want %d", c.risk, got, c.want)
+		}
+	}
+}

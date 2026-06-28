@@ -390,8 +390,8 @@
               <div><label for="g-capital">Capital (USDT)</label><input id="g-capital" inputmode="decimal" placeholder="100" value="100" autocomplete="off" /></div>
             </div>
             <div class="grid2">
-              <div><label for="g-risk">Max risk (% of capital)</label><input id="g-risk" inputmode="numeric" placeholder="30" value="30" autocomplete="off" /></div>
-              <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· type or tap a favourite</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC — or tap a favourite below" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist><div id="g-favchips" class="chips" style="margin-top:0.4rem"></div></div>
+              <div><label for="g-risk">Max risk % <span style="color:var(--muted);font-weight:400">· = live leverage (30 → 30x)</span></label><input id="g-risk" inputmode="numeric" placeholder="30" value="30" autocomplete="off" /></div>
+              <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· type or pick a favourite</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC — or pick a favourite below" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist><select id="g-favselect" style="margin-top:0.4rem;width:100%"><option value="">★ pick a favourite…</option></select></div>
             </div>
             <div class="grid2">
               <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
@@ -1012,15 +1012,23 @@
         box.querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.up, -1)));
         box.querySelectorAll("[data-down]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.down, 1)));
         box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => removeFav(b.dataset.rm)));
-        // Feed favourites into the Goal symbol dropdown + clickable chips.
+        // Feed favourites into the Goal symbol picker. A native <select> scrolls
+        // cleanly however many you star; hottest (highest community edge) first.
         const dl = $("g-favlist");
         if (dl) dl.innerHTML = f.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("");
-        const chips = $("g-favchips");
-        if (chips) {
-          chips.innerHTML = f.map((s) => `<button type="button" class="chip" data-pick="${escapeHtml(s)}">${escapeHtml(String(s).replace(/USDT$/, ""))}${edgeBadge(s)}</button>`).join("");
-          chips.querySelectorAll("[data-pick]").forEach((b) => (b.onclick = () => { $("g-symbol").value = String(b.dataset.pick).replace(/USDT$/, ""); }));
+        const sel = $("g-favselect");
+        if (sel) {
+          const edgeOf = (s) => { const c = coinEdge[normSym(s)] || coinEdge[s]; return c ? Number(c.edge) || 0 : -1; };
+          const ordered = f.slice().sort((a, b) => edgeOf(b) - edgeOf(a));
+          const cur = sel.value;
+          sel.innerHTML = '<option value="">★ pick a favourite…</option>' + ordered.map((s) => {
+            const e = edgeOf(s);
+            return `<option value="${escapeHtml(s)}">${escapeHtml(String(s).replace(/USDT$/, ""))}${e >= 0 ? " · ⭐" + e + "%" : ""}</option>`;
+          }).join("");
+          sel.value = cur;
         }
       }
+      if ($("g-favselect")) $("g-favselect").onchange = (e) => { if (e.target.value) { $("g-symbol").value = String(e.target.value).replace(/USDT$/, ""); } };
       // Tapping a favourite loads it into the Goal form's symbol.
       function loadIntoGoal(coin) {
         $("g-symbol").value = String(coin).replace(/USDT$/, "");
