@@ -75,8 +75,8 @@ func TestFuturesBaseURLDefaultsByMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFromLookup: %v", err)
 	}
-	if cfg.Binance.FuturesBaseURL != "https://testnet.binancefuture.com" {
-		t.Fatalf("testnet FuturesBaseURL = %q, want testnet host", cfg.Binance.FuturesBaseURL)
+	if cfg.Binance.FuturesBaseURL != "https://demo-fapi.binance.com" {
+		t.Fatalf("testnet FuturesBaseURL = %q, want demo host", cfg.Binance.FuturesBaseURL)
 	}
 	// An explicit override is respected.
 	cfg2, _ := LoadFromLookup(testLookup(map[string]string{"BINANCE_FUTURES_BASE_URL": "https://x.example"}))

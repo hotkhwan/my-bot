@@ -259,11 +259,12 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.Binance.Testnet = reader.bool("BINANCE_TESTNET", cfg.Binance.Testnet)
 	cfg.Binance.FuturesBaseURL = reader.string("BINANCE_FUTURES_BASE_URL", cfg.Binance.FuturesBaseURL)
 	// Default the futures REST host to match the testnet/live mode, so live orders
-	// don't fail with "BINANCE_FUTURES_BASE_URL is required". Testnet keys only
-	// authenticate against the testnet host, so the two must always agree.
+	// don't fail with "BINANCE_FUTURES_BASE_URL is required". Binance moved Futures
+	// Mock Trading to Demo Trading: the testnet REST host is now demo-fapi.binance.com
+	// and keys must be created at demo.binance.com (they only auth against that host).
 	if cfg.Binance.FuturesBaseURL == "" {
 		if cfg.Binance.Testnet {
-			cfg.Binance.FuturesBaseURL = "https://testnet.binancefuture.com"
+			cfg.Binance.FuturesBaseURL = "https://demo-fapi.binance.com"
 		} else {
 			cfg.Binance.FuturesBaseURL = "https://fapi.binance.com"
 		}
