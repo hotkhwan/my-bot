@@ -10,7 +10,28 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"bottrade/internal/api"
+	"bottrade/internal/telegram"
 )
+
+// crewAdmin adapts the access store to the Telegram handler's CrewAdmin, so the
+// bot's /pending and /approve commands act on the same approvals as the web.
+type crewAdmin struct{ store api.AccessStore }
+
+func (c crewAdmin) Pending(ctx context.Context) ([]telegram.CrewMember, error) {
+	recs, err := c.store.Pending(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]telegram.CrewMember, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, telegram.CrewMember{Subject: r.Subject, Name: r.Name})
+	}
+	return out, nil
+}
+
+func (c crewAdmin) Approve(ctx context.Context, subject string) error {
+	return c.store.Approve(ctx, subject)
+}
 
 // mongoAccess persists crew-access approvals in MongoDB so they survive restarts
 // and are shared across api instances. It implements api.AccessStore. Records

@@ -35,6 +35,10 @@ Autonomous campaign (testnet, gated):
 /campaign start profit 10 risk 50 symbol BTC
 /campaign stop
 
+Admin:
+/pending          list crew-access requests
+/approve <id>     approve a member
+
 Phase 2 management:
 be BTC
 move sl BTC to be

@@ -95,8 +95,9 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 		interval = "1h"
 	}
 	strategy := "ema"
-	if req.Strategy == "rsi" {
-		strategy = "rsi"
+	switch req.Strategy {
+	case "rsi", "macd", "sma", "breakout":
+		strategy = req.Strategy
 	}
 	bars := req.Bars
 	switch {
@@ -116,7 +117,7 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 	bias := campaign.BiasBoth
 	aiNote := ""
 	if req.UseAI {
-		bias, aiNote = s.aiBias(c.Context(), symbol, candles[len(candles)-1].Close)
+		bias, aiNote = s.aiBias(c.Context(), claimsOf(c).Subject, symbol, candles[len(candles)-1].Close)
 	}
 
 	result, err := campaign.RunPaper(campaign.PaperConfig{
@@ -186,9 +187,14 @@ func (s *Server) handleGoalHistory(c fiber.Ctx) error {
 // aiBias asks the advisor for a directional lean. It never leaks raw upstream
 // errors to the client (logged instead) and degrades to a both-sides rule-based
 // run whenever the advisor is absent, errors, or is neutral.
-func (s *Server) aiBias(ctx context.Context, symbol string, price float64) (campaign.PaperBias, string) {
-	if s.advisor == nil {
-		return campaign.BiasBoth, "AI is not configured on this server — used the rule-based strategy (both sides)."
+func (s *Server) aiBias(ctx context.Context, subject, symbol string, price float64) (campaign.PaperBias, string) {
+	advisor := s.userAdvisor(ctx, subject) // a user's own key takes priority
+	byo := advisor != nil
+	if advisor == nil {
+		advisor = s.advisor
+	}
+	if advisor == nil {
+		return campaign.BiasBoth, "AI is not configured — add your own AI key in Settings, or it falls back to the rule-based strategy."
 	}
 	sig := signals.MarketSignal{
 		Source:     "goal",
@@ -198,18 +204,22 @@ func (s *Server) aiBias(ctx context.Context, symbol string, price float64) (camp
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	decision, err := s.advisor.Decide(ctx, sig)
+	decision, err := advisor.Decide(ctx, sig)
 	if err != nil {
-		s.logger.Warn("goal AI bias failed", "symbol", symbol, "error", err)
+		s.logger.Warn("goal AI bias failed", "symbol", symbol, "byo", byo, "error", err)
 		return campaign.BiasBoth, "AI was unavailable — used the rule-based strategy (both sides)."
+	}
+	who := "AI"
+	if byo {
+		who = "Your AI"
 	}
 	switch strings.ToLower(decision.Side) {
 	case "long":
-		return campaign.BiasLong, "AI leans long (confidence " + strconv.Itoa(decision.ConfidencePercent) + "%)."
+		return campaign.BiasLong, who + " leans long (confidence " + strconv.Itoa(decision.ConfidencePercent) + "%)."
 	case "short":
-		return campaign.BiasShort, "AI leans short (confidence " + strconv.Itoa(decision.ConfidencePercent) + "%)."
+		return campaign.BiasShort, who + " leans short (confidence " + strconv.Itoa(decision.ConfidencePercent) + "%)."
 	default:
-		return campaign.BiasBoth, "AI was neutral — used both sides."
+		return campaign.BiasBoth, who + " was neutral — used both sides."
 	}
 }
 

@@ -226,6 +226,9 @@
       .lbname { font-weight: 600; }
       .lbstat { font-size: 0.76rem; color: var(--text); font-variant-numeric: tabular-nums; }
       .cedge { font-size: 0.66rem; font-weight: 700; color: var(--amber); background: rgba(245, 165, 36, 0.14); padding: 0.05rem 0.35rem; border-radius: 999px; }
+      .reco { background: linear-gradient(100deg, rgba(0, 245, 255, 0.1), rgba(255, 45, 130, 0.1)); border: 1px solid var(--card-border); border-radius: 0.6rem; padding: 0.55rem 0.7rem; margin-bottom: 0.6rem; font-size: 0.84rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+      .reco b { color: var(--primary); }
+      .reco button { width: auto; padding: 0.25rem 0.65rem; font-size: 0.78rem; margin-left: auto; }
       .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(5, 8, 22, 0.78); backdrop-filter: blur(4px); display: flex; align-items: flex-end; justify-content: center; }
       .overlay .sheet { width: 100%; max-width: 40rem; margin: 0 1rem; background: #0b1220; border: 1px solid var(--card-border); border-radius: 1rem 1rem 0 0; padding: 1rem 1.1rem calc(1.2rem + env(safe-area-inset-bottom)); max-height: 86vh; overflow: auto; box-shadow: 0 -20px 60px -20px rgba(0, 0, 0, 0.9); }
       .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
@@ -339,6 +342,7 @@
         <div class="card">
           <strong>Goal — paper test on real data</strong>
           <p style="margin:0.3rem 0 0.6rem">Set a profit goal; it runs your strategy over real Binance candles and shows the real stats. No orders are placed.</p>
+          <div id="g-reco" class="reco hidden"></div>
           <div class="ticket">
             <div class="grid2">
               <div><label for="g-profit">Profit target (USDT)</label><input id="g-profit" inputmode="decimal" placeholder="10" value="10" autocomplete="off" /></div>
@@ -349,7 +353,7 @@
               <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· pick a favourite</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC — or ★ a coin below" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist></div>
             </div>
             <div class="grid2">
-              <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option></select></div>
+              <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
               <div><label for="g-interval">Timeframe</label><select id="g-interval"><option value="15m">15m</option><option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option></select></div>
             </div>
             <label class="gai"><input type="checkbox" id="g-ai" /> Let AI pick the side (per run)</label>
@@ -434,6 +438,17 @@
           <input id="apiSecret" type="password" placeholder="API secret" autocomplete="off" style="margin-top:0.6rem" />
           <div class="actions" style="margin-top:0.8rem"><button class="primary" id="saveKey">Save profile</button></div>
           <div class="msg" id="keyMsg"></div>
+        </div>
+        <div class="card">
+          <strong>🤖 Your AI key <span style="color:var(--muted);font-weight:400">(optional)</span></strong>
+          <p style="margin:0.3rem 0 0.6rem">Bring your own LLM key so "Let AI pick the side" runs on <b>your</b> quota — free, no limits from us. Otherwise it uses the shared server AI.</p>
+          <div id="aikey-status" style="margin-bottom:0.5rem"></div>
+          <select id="ai-provider"><option value="anthropic">Anthropic (Claude)</option><option value="openai_compatible">OpenAI-compatible</option></select>
+          <input id="ai-model" placeholder="model (e.g. claude-haiku-4-5-20251001)" autocomplete="off" style="margin-top:0.6rem" />
+          <input id="ai-key" type="password" placeholder="API key" autocomplete="off" style="margin-top:0.6rem" />
+          <input id="ai-baseurl" placeholder="base URL (optional · OpenAI-compatible)" autocomplete="off" style="margin-top:0.6rem" />
+          <div class="actions" style="margin-top:0.8rem"><button class="primary" id="ai-save">Save AI key</button><button class="ghost" id="ai-del">Remove</button></div>
+          <div class="msg" id="ai-msg"></div>
         </div>
         <div class="card hidden" id="admin-card">
           <strong>🛡 Crew approvals</strong>
@@ -608,6 +623,7 @@
         const v = pathView();
         showView(v === "login" ? "home" : v);
         refreshKeyStatus();
+        loadAIKey();
         connectStream();
         renderFavs();
         startPricePolling();
@@ -753,6 +769,27 @@
         const d = await r.json().catch(() => ({}));
         keyMsg(r.ok ? `Saved profile "${profile}".` : d.error || "Failed", r.ok);
         $("apiKey").value = ""; $("apiSecret").value = ""; refreshKeyStatus();
+      };
+      // ---- bring-your-own AI key ----
+      function aiMsg(t, ok) { $("ai-msg").textContent = t || ""; $("ai-msg").style.color = ok ? "var(--profit)" : "var(--loss)"; }
+      async function loadAIKey() {
+        try {
+          const d = await (await fetch("/api/ai-key", { headers: authHeaders() })).json();
+          $("aikey-status").innerHTML = d.set
+            ? `<span class="badge active">your key set</span> <span class="badge">${escapeHtml(d.provider || "")}</span> <span class="badge">${escapeHtml(d.model || "")}</span>`
+            : '<span class="badge">using shared server AI</span>';
+        } catch (e) {}
+      }
+      $("ai-save").onclick = async () => {
+        const body = { provider: $("ai-provider").value, model: $("ai-model").value, api_key: $("ai-key").value, base_url: $("ai-baseurl").value };
+        const r = await fetch("/api/ai-key", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
+        const d = await r.json().catch(() => ({}));
+        aiMsg(r.ok ? "Saved your AI key." : d.error || "Failed", r.ok);
+        $("ai-key").value = ""; loadAIKey();
+      };
+      $("ai-del").onclick = async () => {
+        await fetch("/api/ai-key", { method: "DELETE", headers: authHeaders() });
+        aiMsg("Removed — back to shared server AI.", true); loadAIKey();
       };
 
       // ---- console ----
@@ -1000,7 +1037,20 @@
             ? coins.map((c) => `<div class="fav"><span class="sym">${escapeHtml(c.symbol)}</span><span class="px"><div><span class="cedge">⭐ ${c.edge}%</span></div><div class="chg ${c.avg_profit_pct >= 0 ? "up" : "down"}">${c.avg_profit_pct >= 0 ? "+" : ""}${c.avg_profit_pct}% · ${c.runs}r</div></span></div>`).join("")
             : "<p style='font-size:0.85rem;color:#94A3B8'>No coins yet.</p>";
           renderFavs();
+          renderReco(strats[0], coins[0], d.total_runs || 0);
         } catch (e) { $("comm-strats").textContent = "Could not load community stats."; }
+      }
+      const stratValue = { ema_cross: "ema", rsi_reversion: "rsi", macd: "macd", sma_cross: "sma", breakout: "breakout" };
+      function renderReco(topStrat, topCoin, totalRuns) {
+        const box = $("g-reco");
+        if (!box || !topStrat || totalRuns < 1) { if (box) box.classList.add("hidden"); return; }
+        const sym = topCoin ? topCoin.symbol.replace(/USDT$/, "") : "";
+        box.innerHTML = `🤖 <b>ANNY recommends</b> ${escapeHtml(topStrat.name)}${sym ? " on " + escapeHtml(sym) : ""} <span style="color:var(--muted)">· from ${totalRuns} community missions · not advice</span> <button class="ghost" id="g-reco-apply">Apply</button>`;
+        box.classList.remove("hidden");
+        $("g-reco-apply").onclick = () => {
+          $("g-strategy").value = stratValue[topStrat.name] || "ema";
+          if (sym) $("g-symbol").value = sym;
+        };
       }
       function edgeBadge(sym) {
         const c = coinEdge[normSym(sym)] || coinEdge[sym];

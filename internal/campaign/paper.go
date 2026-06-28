@@ -77,6 +77,12 @@ func StrategyFor(name string) backtest.Strategy {
 	switch name {
 	case "rsi", "rsi_reversion":
 		return backtest.RSIReversionStrategy{Period: 14, Low: 30, High: 70}
+	case "macd":
+		return backtest.MACDStrategy{Fast: 12, Slow: 26, Signal: 9}
+	case "sma", "sma_cross":
+		return backtest.SMACrossStrategy{Fast: 10, Slow: 30}
+	case "breakout", "donchian":
+		return backtest.BreakoutStrategy{Period: 20}
 	default:
 		return backtest.EMACrossStrategy{Fast: 12, Slow: 26}
 	}

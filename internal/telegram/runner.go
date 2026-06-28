@@ -23,6 +23,13 @@ type PollingRunner struct {
 }
 
 // SetCampaignManager enables the /campaign command on the runner's handler.
+// SetCrew enables the admin /pending and /approve commands.
+func (r *PollingRunner) SetCrew(crew CrewAdmin) {
+	if r.handler != nil {
+		r.handler.WithCrew(crew)
+	}
+}
+
 func (r *PollingRunner) SetCampaignManager(manager *campaignexec.Manager) {
 	if r.handler != nil {
 		r.handler.WithCampaigns(manager)

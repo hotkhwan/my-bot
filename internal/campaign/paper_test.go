@@ -139,6 +139,32 @@ func TestRunPaperRSIStrategyRuns(t *testing.T) {
 	}
 }
 
+func TestStrategyForNames(t *testing.T) {
+	cases := map[string]string{
+		"ema": "ema_cross", "rsi": "rsi_reversion", "macd": "macd",
+		"sma": "sma_cross", "breakout": "breakout", "unknown": "ema_cross",
+	}
+	for in, want := range cases {
+		if got := StrategyFor(in).Name(); got != want {
+			t.Errorf("StrategyFor(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRunPaperNewStrategiesRun(t *testing.T) {
+	goal, _ := ParseGoal("goal profit 5 capital 100")
+	candles := trendCandles(100, 0.01, 0.012, 0.0005, 120)
+	for _, strat := range []string{"macd", "sma", "breakout"} {
+		res, err := RunPaper(PaperConfig{Goal: goal, Symbol: "BTCUSDT", Strategy: strat}, candles)
+		if err != nil {
+			t.Fatalf("RunPaper(%s): %v", strat, err)
+		}
+		if len(res.Trades) == 0 {
+			t.Fatalf("%s produced no trades on an uptrend", strat)
+		}
+	}
+}
+
 func TestRunPaperDegenerateGoalUsesSafeDefaults(t *testing.T) {
 	// A goal missing its derived reward/risk (zero) must not panic or emit NaN;
 	// the engine falls back to safe defaults and still produces finite PnL.

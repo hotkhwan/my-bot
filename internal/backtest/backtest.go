@@ -191,3 +191,99 @@ func (s RSIReversionStrategy) Evaluate(history []float64) Signal {
 		return Flat
 	}
 }
+
+// MACDStrategy trades the MACD line relative to its signal line: long when MACD
+// is above signal (positive histogram), short when below.
+type MACDStrategy struct {
+	Fast   int
+	Slow   int
+	Signal int
+}
+
+func (s MACDStrategy) Name() string { return "macd" }
+
+func (s MACDStrategy) Evaluate(history []float64) Signal {
+	_, _, hist, err := indicators.MACD(history, s.Fast, s.Slow, s.Signal)
+	if err != nil {
+		return Flat
+	}
+	switch {
+	case hist > 0:
+		return Long
+	case hist < 0:
+		return Short
+	default:
+		return Flat
+	}
+}
+
+// SMACrossStrategy goes long when the fast simple moving average is above the
+// slow one, short when below — a slower, smoother trend follower than EMA cross.
+type SMACrossStrategy struct {
+	Fast int
+	Slow int
+}
+
+func (s SMACrossStrategy) Name() string { return "sma_cross" }
+
+func (s SMACrossStrategy) Evaluate(history []float64) Signal {
+	fast, ok1 := sma(history, s.Fast)
+	slow, ok2 := sma(history, s.Slow)
+	if !ok1 || !ok2 {
+		return Flat
+	}
+	switch {
+	case fast > slow:
+		return Long
+	case fast < slow:
+		return Short
+	default:
+		return Flat
+	}
+}
+
+// BreakoutStrategy is a Donchian-style channel breakout on closes: long when the
+// latest close makes a new Period high, short when it makes a new Period low.
+type BreakoutStrategy struct {
+	Period int
+}
+
+func (s BreakoutStrategy) Name() string { return "breakout" }
+
+func (s BreakoutStrategy) Evaluate(history []float64) Signal {
+	n := s.Period
+	if n < 2 || len(history) < n+1 {
+		return Flat
+	}
+	last := history[len(history)-1]
+	window := history[len(history)-1-n : len(history)-1] // prior n closes
+	hi, lo := window[0], window[0]
+	for _, v := range window {
+		if v > hi {
+			hi = v
+		}
+		if v < lo {
+			lo = v
+		}
+	}
+	switch {
+	case last >= hi:
+		return Long
+	case last <= lo:
+		return Short
+	default:
+		return Flat
+	}
+}
+
+// sma returns the simple moving average of the last period values.
+func sma(values []float64, period int) (float64, bool) {
+	if period <= 0 || len(values) < period {
+		return 0, false
+	}
+	var sum float64
+	for _, v := range values[len(values)-period:] {
+		sum += v
+	}
+	return sum / float64(period), true
+}

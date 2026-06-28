@@ -39,7 +39,27 @@ type Handler struct {
 	klines        klineSource
 	campaigns     *campaignexec.Manager
 	webAppURL     string
+	crew          CrewAdmin
 	logger        *slog.Logger
+}
+
+// CrewMember is a pending access request, for the admin /pending list.
+type CrewMember struct {
+	Subject string
+	Name    string
+}
+
+// CrewAdmin lets the admin list and approve crew-access requests from Telegram.
+// It is backed by the same store the web "Crew approvals" panel uses.
+type CrewAdmin interface {
+	Pending(ctx context.Context) ([]CrewMember, error)
+	Approve(ctx context.Context, subject string) error
+}
+
+// WithCrew enables the admin-only /pending and /approve commands.
+func (h *Handler) WithCrew(crew CrewAdmin) *Handler {
+	h.crew = crew
+	return h
 }
 
 // WithWebAppURL enables the "Open ANNY" Telegram Mini App button on /start and
@@ -179,6 +199,10 @@ func (h *Handler) Handle(ctx context.Context, sender Sender, update *models.Upda
 		return h.sendGoal(ctx, sender, message.Chat.ID, text)
 	case "/campaign":
 		return h.handleCampaign(sender, message.Chat.ID, userID, text)
+	case "/pending":
+		return h.handlePending(ctx, sender, message.Chat.ID, userID)
+	case "/approve":
+		return h.handleApprove(ctx, sender, message.Chat.ID, userID, commandArg(text))
 	}
 
 	intent, err := h.parser.Parse(text)
@@ -509,6 +533,48 @@ func webAppKeyboard(url string) models.ReplyMarkup {
 			{Text: "🤖 Open ANNY", WebApp: &models.WebAppInfo{URL: url}},
 		}},
 	}
+}
+
+// handlePending lists pending crew-access requests (admin only).
+func (h *Handler) handlePending(ctx context.Context, sender Sender, chatID, userID int64) error {
+	if h.adminUserID == 0 || userID != h.adminUserID {
+		return h.sendText(ctx, sender, chatID, "Admin only.")
+	}
+	if h.crew == nil {
+		return h.sendText(ctx, sender, chatID, "Crew approvals are not enabled.")
+	}
+	members, err := h.crew.Pending(ctx)
+	if err != nil {
+		return h.sendText(ctx, sender, chatID, "Could not load requests.")
+	}
+	if len(members) == 0 {
+		return h.sendText(ctx, sender, chatID, "No pending crew requests. 🎉")
+	}
+	var b strings.Builder
+	b.WriteString("🛡 Pending crew requests:\n")
+	for _, m := range members {
+		id := strings.TrimPrefix(m.Subject, "tg:")
+		fmt.Fprintf(&b, "\n• %s — /approve %s", m.Name, id)
+	}
+	return h.sendText(ctx, sender, chatID, b.String())
+}
+
+// handleApprove approves a user by Telegram id (admin only): /approve 12345.
+func (h *Handler) handleApprove(ctx context.Context, sender Sender, chatID, userID int64, arg string) error {
+	if h.adminUserID == 0 || userID != h.adminUserID {
+		return h.sendText(ctx, sender, chatID, "Admin only.")
+	}
+	if h.crew == nil {
+		return h.sendText(ctx, sender, chatID, "Crew approvals are not enabled.")
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(arg, "tg:"))
+	if id == "" {
+		return h.sendText(ctx, sender, chatID, "Usage: /approve <telegram id>  (see /pending)")
+	}
+	if err := h.crew.Approve(ctx, "tg:"+id); err != nil {
+		return h.sendText(ctx, sender, chatID, "Could not approve.")
+	}
+	return h.sendText(ctx, sender, chatID, "✅ Approved tg:"+id+" — they now have full access.")
 }
 
 func confirmationKeyboard(id string) models.ReplyMarkup {

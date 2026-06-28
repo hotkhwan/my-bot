@@ -145,6 +145,9 @@ func (a *App) Run(ctx context.Context) error {
 		runner.StartRealtime(ctx, broadcaster, a.cfg.Telegram.AdminUserID)
 	}
 	runner.SetCampaignManager(a.buildCampaignManager(orderService, broadcaster))
+	if store, ok := signalStore.(*mongostore.Store); ok {
+		runner.SetCrew(crewAdmin{store: newMongoAccess(store.AccessCollection())})
+	}
 
 	if a.cfg.HTTP.Enabled {
 		go func() {
@@ -175,7 +178,7 @@ func (a *App) RunWorker(ctx context.Context) error {
 
 	a.logBootstrap("worker")
 
-	orderService, statusService, planService, _, trailExchange, cleanup, err := a.newTradingServices(ctx)
+	orderService, statusService, planService, signalStore, trailExchange, cleanup, err := a.newTradingServices(ctx)
 	if err != nil {
 		return err
 	}
@@ -201,6 +204,9 @@ func (a *App) RunWorker(ctx context.Context) error {
 		runner.StartRealtime(ctx, broadcaster, a.cfg.Telegram.AdminUserID)
 	}
 	runner.SetCampaignManager(a.buildCampaignManager(orderService, broadcaster))
+	if store, ok := signalStore.(*mongostore.Store); ok {
+		runner.SetCrew(crewAdmin{store: newMongoAccess(store.AccessCollection())})
+	}
 
 	return runner.Run(ctx)
 }
@@ -346,6 +352,8 @@ func (a *App) serverOptions(signalStore signals.SignalStore) []api.Option {
 			} else {
 				a.logger.Warn("per-user credentials disabled", "error", err)
 			}
+			// Per-user (bring-your-own) AI keys share the same keyring.
+			opts = append(opts, api.WithAISecrets(newMongoAISecrets(store.AIKeysCollection()), keyring))
 		} else {
 			a.logger.Warn("per-user credentials disabled", "error", err)
 		}

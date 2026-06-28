@@ -27,6 +27,12 @@ type Store struct {
 	credentials   *mongodriver.Collection
 	goalRuns      *mongodriver.Collection
 	access        *mongodriver.Collection
+	aiKeys        *mongodriver.Collection
+}
+
+// AIKeysCollection exposes the per-user AI-key collection.
+func (s *Store) AIKeysCollection() *mongodriver.Collection {
+	return s.aiKeys
 }
 
 // GoalRunsCollection exposes the goal_runs collection so the app layer can wire
@@ -73,6 +79,7 @@ func Connect(ctx context.Context, cfg Config) (*Store, error) {
 		credentials:   db.Collection("binance_credentials"),
 		goalRuns:      db.Collection("goal_runs"),
 		access:        db.Collection("crew_access"),
+		aiKeys:        db.Collection("ai_keys"),
 	}
 	if err := store.ensureIndexes(ctx); err != nil {
 		_ = client.Disconnect(ctx)

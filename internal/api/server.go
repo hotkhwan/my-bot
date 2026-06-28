@@ -63,6 +63,8 @@ type Server struct {
 	advisor     signals.Advisor
 	goalRuns    GoalRunStore
 	access      AccessStore
+	aiSecrets   AISecretStore
+	keyring     *auth.Keyring
 	logger      *slog.Logger
 	app         *fiber.App
 }
@@ -121,6 +123,11 @@ func WithAccessStore(store AccessStore) Option {
 	return func(s *Server) { s.access = store }
 }
 
+// WithAISecrets enables per-user (bring-your-own) AI keys, sealed with keyring.
+func WithAISecrets(store AISecretStore, keyring *auth.Keyring) Option {
+	return func(s *Server) { s.aiSecrets = store; s.keyring = keyring }
+}
+
 func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Logger, opts ...Option) *Server {
 	if logger == nil {
 		logger = slog.Default()
@@ -145,6 +152,9 @@ func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Log
 	}
 	if server.access == nil {
 		server.access = newMemAccess()
+	}
+	if server.aiSecrets == nil {
+		server.aiSecrets = newMemAISecrets()
 	}
 	server.routes()
 	return server
@@ -204,6 +214,9 @@ func (s *Server) routes() {
 	s.app.Get("/api/goal/history", s.requireAuth, s.handleGoalHistory)
 	s.app.Get("/api/recorder", s.requireAuth, s.handleRecorder)
 	s.app.Get("/api/leaderboard", s.requireAuth, s.handleLeaderboard)
+	s.app.Post("/api/ai-key", s.requireAuth, s.handleStoreAIKey)
+	s.app.Get("/api/ai-key", s.requireAuth, s.handleGetAIKey)
+	s.app.Delete("/api/ai-key", s.requireAuth, s.handleDeleteAIKey)
 	s.app.Get("/api/me", s.requireAuth, s.handleMe)
 	s.app.Post("/api/access/request", s.requireAuth, s.handleAccessRequest)
 	s.app.Get("/api/admin/pending", s.requireAuth, s.handleAdminPending)

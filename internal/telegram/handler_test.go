@@ -185,6 +185,47 @@ func TestHandlerAppCommandLaunchesMiniApp(t *testing.T) {
 	}
 }
 
+type fakeCrew struct {
+	pending  []CrewMember
+	approved []string
+}
+
+func (f *fakeCrew) Pending(context.Context) ([]CrewMember, error) { return f.pending, nil }
+func (f *fakeCrew) Approve(_ context.Context, subject string) error {
+	f.approved = append(f.approved, subject)
+	return nil
+}
+
+func TestHandlerCrewApproval(t *testing.T) {
+	crew := &fakeCrew{pending: []CrewMember{{Subject: "tg:999", Name: "newbie"}}}
+	handler := NewHandler(12345, nil, testLogger()).WithCrew(crew) // admin = 12345
+
+	// Non-admin is refused.
+	s0 := &fakeSender{}
+	_ = handler.Handle(context.Background(), s0, textUpdate(999, 111, "/pending"))
+	if len(s0.messages) != 0 {
+		t.Fatalf("non-admin should be ignored by allowlist (got %d msgs)", len(s0.messages))
+	}
+
+	// Admin lists pending.
+	s1 := &fakeSender{}
+	if err := handler.Handle(context.Background(), s1, textUpdate(12345, 111, "/pending")); err != nil {
+		t.Fatalf("pending: %v", err)
+	}
+	if !strings.Contains(s1.singleMessage(t).Text, "/approve 999") {
+		t.Fatalf("pending text = %q", s1.singleMessage(t).Text)
+	}
+
+	// Admin approves by id.
+	s2 := &fakeSender{}
+	if err := handler.Handle(context.Background(), s2, textUpdate(12345, 111, "/approve 999")); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if len(crew.approved) != 1 || crew.approved[0] != "tg:999" {
+		t.Fatalf("approved = %v, want [tg:999]", crew.approved)
+	}
+}
+
 func TestHandlerHelpCommandShowsPhaseOneGrammar(t *testing.T) {
 	handler := NewHandler(12345, nil, testLogger())
 	sender := &fakeSender{}
