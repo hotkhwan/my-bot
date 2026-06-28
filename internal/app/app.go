@@ -386,13 +386,18 @@ func (a *App) newTradingServices(ctx context.Context) (*orders.Service, *orders.
 			RequestTimeout:       a.cfg.Binance.RequestTimeout,
 			ExchangeInfoCacheTTL: a.cfg.Binance.ExchangeInfoCacheTTL,
 		}
-		binanceExecutor := binanceexec.NewExecutor(execCfg, a.logger)
-		executor = binanceExecutor
-		positionProvider = binanceExecutor
-		trailExchange = binanceExecutor
+		// The shared (platform) executor is optional: it is only the fallback for
+		// users who have not added their own key. When no platform key is set,
+		// keyless users stay on the dry-run executor and only users with their own
+		// stored key trade for real — the multi-tenant default.
+		if a.cfg.Binance.APIKey != "" && a.cfg.Binance.APISecret != "" {
+			binanceExecutor := binanceexec.NewExecutor(execCfg, a.logger)
+			executor = binanceExecutor
+			positionProvider = binanceExecutor
+			trailExchange = binanceExecutor
+		}
 
-		// Per-user executors: each user trades on their own stored key. Falls
-		// back to the shared executor (above) when a user has no key.
+		// Per-user executors: each user trades on their own stored key.
 		if a.cfg.Auth.Enabled {
 			if keyring, err := auth.NewKeyring(map[string][]byte{a.cfg.Auth.EncryptionKeyID: a.cfg.Auth.EncryptionKey}, a.cfg.Auth.EncryptionKeyID); err == nil {
 				if credentialService, err := auth.NewCredentialService(keyring, store.Credentials()); err == nil {

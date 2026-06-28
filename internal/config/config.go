@@ -416,8 +416,11 @@ func validate(cfg Config, problems *[]string) {
 		addProblem(problems, "EXCHANGE_INFO_CACHE_TTL_SECONDS must be greater than 0")
 	}
 
-	if !cfg.App.DryRun && (cfg.Binance.APIKey == "" || cfg.Binance.APISecret == "") {
-		addProblem(problems, "BINANCE_API_KEY and BINANCE_API_SECRET are required when DRY_RUN=false")
+	if !cfg.App.DryRun && !cfg.Auth.Enabled && (cfg.Binance.APIKey == "" || cfg.Binance.APISecret == "") {
+		// When per-user credentials are enabled (CREDENTIAL_ENCRYPTION_KEY set),
+		// each user trades on their own stored key, so the shared platform key is
+		// optional — keyless users simply stay on the dry-run fallback executor.
+		addProblem(problems, "BINANCE_API_KEY and BINANCE_API_SECRET are required when DRY_RUN=false (unless per-user credentials are enabled via CREDENTIAL_ENCRYPTION_KEY)")
 	}
 
 	if cfg.App.RealTradingEnabled {

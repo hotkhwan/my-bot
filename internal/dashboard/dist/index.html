@@ -815,6 +815,7 @@
       let coinTimer = null;
       $("coinSearch").addEventListener("input", (e) => {
         clearTimeout(coinTimer); const q = e.target.value.trim();
+        if (!q) { $("coinResults").innerHTML = ""; return; } // empty search → no chips
         coinTimer = setTimeout(async () => {
           const d = await (await fetch("/api/symbols?q=" + encodeURIComponent(q), { headers: authHeaders() })).json();
           const box = $("coinResults");
