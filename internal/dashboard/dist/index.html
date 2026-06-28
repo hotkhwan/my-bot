@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ANNY · AI Trading Companion</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23050816'/%3E%3Cpath d='M15 22 L19 8 L32 19 Z' fill='%23FF2D82'/%3E%3Cpath d='M49 22 L45 8 L32 19 Z' fill='%23FF2D82'/%3E%3Crect x='13' y='17' width='38' height='32' rx='13' fill='%230b1220' stroke='%2300F5FF' stroke-width='2'/%3E%3Cpath d='M24 29 l5 4 -5 4' stroke='%2300F5FF' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M40 29 l-5 4 5 4' stroke='%2300F5FF' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -16,7 +17,9 @@
         --card-border: rgba(0, 245, 255, 0.12);
         --primary: #00F5FF;
         --accent: #00F5FF;
+        --pink: #FF2D82;
         --accent-grad: linear-gradient(135deg, #00F0FF, #0066FF);
+        --brand-grad: linear-gradient(100deg, #00F5FF, #FF2D82);
         --profit: #00FF99;
         --loss: #FF4D6D;
         --amber: #F5A524;
@@ -64,13 +67,13 @@
       /* ---- app bar ---- */
       .appbar { display: flex; align-items: center; gap: 0.7rem; padding: 1.2rem 0 0.4rem; }
       .brand { display: flex; align-items: center; gap: 0.6rem; }
-      .mascot { width: 2.6rem; height: 2.6rem; flex: 0 0 auto; animation: float 4.5s ease-in-out infinite; filter: drop-shadow(0 0 10px rgba(0, 245, 255, 0.45)); }
+      .mascot { width: 2.7rem; height: 2.7rem; flex: 0 0 auto; animation: float 4.5s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(0, 245, 255, 0.45)) drop-shadow(0 0 10px rgba(255, 45, 130, 0.35)); }
       @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
       @keyframes blink { 0%, 92%, 100% { opacity: 1; } 95% { opacity: 0.25; } }
       .mascot .eye { animation: blink 5s infinite; }
-      .brand .word { font-family: var(--font-head); font-weight: 700; font-size: 1.25rem; line-height: 1.05;
-        background: linear-gradient(90deg, #fff, #00F5FF); -webkit-background-clip: text; background-clip: text; color: transparent;
-        text-shadow: 0 0 16px rgba(0, 245, 255, 0.35); }
+      .brand .word { font-family: var(--font-head); font-weight: 700; font-size: 1.35rem; line-height: 1.05; letter-spacing: 0.5px;
+        background: var(--brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+        text-shadow: 0 0 18px rgba(255, 45, 130, 0.3); }
       .brand .sub { font-size: 0.7rem; color: var(--muted); letter-spacing: 0.4px; margin-top: 1px; }
       .appbar .spacer { flex: 1; }
       .greeting { font-family: var(--font-head); font-size: 0.92rem; color: var(--text); margin: 0.1rem 0 0.2rem; }
@@ -226,14 +229,16 @@
             <stop offset="0" stop-color="#00F0FF"/><stop offset="1" stop-color="#0066FF"/>
           </linearGradient>
         </defs>
-        <rect x="6" y="16" width="6" height="20" rx="3" fill="url(#novaG2)"/>
-        <rect x="52" y="16" width="6" height="20" rx="3" fill="url(#novaG2)"/>
-        <rect x="13" y="12" width="38" height="34" rx="12" fill="#0b1220" stroke="url(#novaG2)" stroke-width="2"/>
-        <rect x="29" y="4" width="6" height="8" rx="3" fill="url(#novaG2)"/>
-        <circle cx="32" cy="3" r="2.5" fill="#00F5FF"/>
-        <circle class="eye" cx="25" cy="29" r="4" fill="#00F5FF"/>
-        <circle class="eye" cx="39" cy="29" r="4" fill="#00F5FF"/>
-        <path d="M24 39 Q32 44 40 39" stroke="#00F5FF" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.85"/>
+        <path d="M13 21 L17 5 L31 18 Z" fill="#0b1220" stroke="url(#novaG2)" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M51 21 L47 5 L33 18 Z" fill="#0b1220" stroke="url(#novaG2)" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M17.5 17 L19 9 L26 16 Z" fill="#FF2D82"/>
+        <path d="M46.5 17 L45 9 L38 16 Z" fill="#FF2D82"/>
+        <rect x="5" y="26" width="6" height="14" rx="3" fill="#FF2D82"/>
+        <rect x="53" y="26" width="6" height="14" rx="3" fill="#FF2D82"/>
+        <rect x="11" y="16" width="42" height="34" rx="14" fill="#0b1220" stroke="url(#novaG2)" stroke-width="2"/>
+        <path class="eye" d="M23 28 l5 4 -5 4" stroke="#00F5FF" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <path class="eye" d="M41 28 l-5 4 5 4" stroke="#00F5FF" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M27 42 Q32 46 37 42" stroke="#00F5FF" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.85"/>
       </svg>
     </template>
 
@@ -241,22 +246,24 @@
       <div class="appbar">
         <div class="brand">
           <svg class="mascot" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <rect x="6" y="16" width="6" height="20" rx="3" fill="url(#novaG)"/>
-            <rect x="52" y="16" width="6" height="20" rx="3" fill="url(#novaG)"/>
-            <rect x="13" y="12" width="38" height="34" rx="12" fill="#0b1220" stroke="url(#novaG)" stroke-width="2"/>
-            <rect x="29" y="4" width="6" height="8" rx="3" fill="url(#novaG)"/>
-            <circle cx="32" cy="3" r="2.5" fill="#00F5FF"/>
-            <circle class="eye" cx="25" cy="29" r="4" fill="#00F5FF"/>
-            <circle class="eye" cx="39" cy="29" r="4" fill="#00F5FF"/>
-            <path d="M24 39 Q32 44 40 39" stroke="#00F5FF" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.85"/>
             <defs>
               <linearGradient id="novaG" x1="0" y1="0" x2="1" y2="1">
                 <stop offset="0" stop-color="#00F0FF"/><stop offset="1" stop-color="#0066FF"/>
               </linearGradient>
             </defs>
+            <path d="M13 21 L17 5 L31 18 Z" fill="#0b1220" stroke="url(#novaG)" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M51 21 L47 5 L33 18 Z" fill="#0b1220" stroke="url(#novaG)" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M17.5 17 L19 9 L26 16 Z" fill="#FF2D82"/>
+            <path d="M46.5 17 L45 9 L38 16 Z" fill="#FF2D82"/>
+            <rect x="5" y="26" width="6" height="14" rx="3" fill="#FF2D82"/>
+            <rect x="53" y="26" width="6" height="14" rx="3" fill="#FF2D82"/>
+            <rect x="11" y="16" width="42" height="34" rx="14" fill="#0b1220" stroke="url(#novaG)" stroke-width="2"/>
+            <path class="eye" d="M23 28 l5 4 -5 4" stroke="#00F5FF" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <path class="eye" d="M41 28 l-5 4 5 4" stroke="#00F5FF" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M27 42 Q32 46 37 42" stroke="#00F5FF" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.85"/>
           </svg>
           <div>
-            <div class="word">🤖 ANNY</div>
+            <div class="word">ANNY</div>
             <div class="sub">AI Trading Companion</div>
           </div>
         </div>
