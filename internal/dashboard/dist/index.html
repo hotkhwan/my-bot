@@ -461,8 +461,9 @@
         </div>
 
         <div class="card">
-          <strong>Live positions</strong>
-          <div class="msg" id="stream-msg">Connecting…</div>
+          <strong>Live positions <span style="color:var(--muted);font-weight:400;font-size:0.8rem">· testnet</span></strong>
+          <div id="positions">Loading…</div>
+          <div class="msg" id="stream-msg" style="margin-top:0.5rem"></div>
           <div id="stream-feed"></div>
         </div>
       </section>
@@ -683,7 +684,7 @@
         ["home", "orders", "history", "community", "settings", "login"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== name));
         document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === name));
         if (name === "home") loadHome();
-        if (name === "orders") { refreshKeyStatus(); loadGoalHistory(); loadLeaderboard(); }
+        if (name === "orders") { refreshKeyStatus(); loadGoalHistory(); loadLeaderboard(); loadPositions(); }
         if (name === "history") { loadRecorder(); loadHistory(); }
         if (name === "community") loadLeaderboard();
         if (name === "settings") refreshKeyStatus();
@@ -1144,11 +1145,35 @@
         try {
           const d = await (await fetch("/api/confirm", { method: "POST", headers: authHeaders(), body: JSON.stringify({ id, cancel }) })).json();
           $("g-confirm-out").textContent = d.output || d.error || "Done.";
-          if (!cancel) loadGoalHistory();
+          if (!cancel) { loadGoalHistory(); setTimeout(loadPositions, 1500); }
         } catch (e) { $("g-confirm-out").textContent = "Network error"; }
       }
       $("g-confirm-yes").onclick = () => resolveMission(false);
       $("g-confirm-no").onclick = () => resolveMission(true);
+      // ---- live positions (the user's own testnet account) ----
+      async function loadPositions() {
+        const box = $("positions"); if (!box) return;
+        try {
+          const d = await (await fetch("/api/positions", { headers: authHeaders() })).json();
+          const ps = d.positions || [];
+          if (!ps.length) { box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No open positions. Run a live Mission to open one.</p>'; return; }
+          box.innerHTML = ps.map((p) => {
+            const pnl = Number(p.pnl) || 0, up = pnl >= 0, sideCls = p.side === "long" ? "up" : "down";
+            return `<div class="grun"><span><b>${escapeHtml(p.symbol)}</b> <span class="${sideCls}">${escapeHtml(p.side)}</span> ${escapeHtml(String(p.leverage))}x<br><span style="color:var(--muted);font-size:0.75rem">entry ${escapeHtml(p.entry)} · mark ${escapeHtml(p.mark)}</span></span><span class="gp ${up ? "up" : "down"}">${fmtPnl(pnl)}</span><button class="ghost" data-close="${escapeHtml(p.symbol)}" style="width:auto;padding:0.2rem 0.6rem;flex:0 0 auto">Close</button></div>`;
+          }).join("");
+          box.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => closePosition(b.dataset.close)));
+        } catch (e) { box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">Could not load positions.</p>'; }
+      }
+      async function closePosition(symbol) {
+        if (!confirm("Close " + symbol + " (100%) on your active key?")) return;
+        try {
+          const r = await fetch("/api/positions/close", { method: "POST", headers: authHeaders(), body: JSON.stringify({ symbol }) });
+          const d = await r.json().catch(() => ({}));
+          $("g-confirm-out").textContent = d.output || d.error || "Failed"; $("g-confirm-out").classList.remove("hidden");
+          if (d.confirm_id) { missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); }
+          $("g-confirm-out").scrollIntoView({ behavior: "smooth", block: "center" });
+        } catch (e) {}
+      }
       async function loadGoalHistory() {
         try {
           const d = await (await fetch("/api/goal/history", { headers: authHeaders() })).json();
