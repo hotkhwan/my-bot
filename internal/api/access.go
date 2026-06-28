@@ -24,8 +24,9 @@ import (
 type AccessRecord struct {
 	Subject     string    `json:"subject" bson:"_id"`
 	Name        string    `json:"name" bson:"name"`
-	Status      string    `json:"status" bson:"status"`                 // requested | approved
+	Status      string    `json:"status" bson:"status"`                 // requested | approved | revoked
 	Tier        string    `json:"tier,omitempty" bson:"tier,omitempty"` // free | captain | commander
+	Role        string    `json:"role,omitempty" bson:"role,omitempty"` // "" (member) | admin
 	RequestedAt time.Time `json:"requested_at" bson:"requested_at"`
 	ApprovedAt  time.Time `json:"approved_at,omitempty" bson:"approved_at,omitempty"`
 }
@@ -34,6 +35,7 @@ const (
 	accessRequested = "requested"
 	accessApproved  = "approved"
 	accessRevoked   = "revoked"
+	roleAdmin       = "admin"
 )
 
 // AccessStore persists per-user access state.
@@ -43,18 +45,56 @@ type AccessStore interface {
 	Approve(ctx context.Context, subject string) error
 	Revoke(ctx context.Context, subject string) error
 	SetTier(ctx context.Context, subject, tier string) error
+	SetRole(ctx context.Context, subject, role string) error
 	Pending(ctx context.Context) ([]AccessRecord, error)
 }
 
 func (s *Server) isAdmin(c fiber.Ctx) bool {
-	return s.isAdminSubject(claimsOf(c).Subject)
+	subject := claimsOf(c).Subject
+	if s.isAdminSubject(subject) {
+		return true
+	}
+	// Promoted admins carry role=admin in their access record.
+	if s.access != nil {
+		if rec, ok, err := s.access.Get(c.Context(), subject); err == nil && ok && rec.Role == roleAdmin {
+			return true
+		}
+	}
+	return false
 }
 
+// isAdminSubject is the config (root) admin from TELEGRAM_ADMIN_USER_ID — the one
+// who can never be revoked/demoted.
 func (s *Server) isAdminSubject(subject string) bool {
 	if s.cfg.Telegram.AdminUserID == 0 {
 		return false
 	}
 	return subject == "tg:"+strconv.FormatInt(s.cfg.Telegram.AdminUserID, 10)
+}
+
+// handleAdminMakeAdmin promotes an approved member to admin (admin only).
+func (s *Server) handleAdminMakeAdmin(c fiber.Ctx) error {
+	if !s.isAdmin(c) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "admin only"})
+	}
+	var body struct {
+		Subject string `json:"subject"`
+		Demote  bool   `json:"demote"`
+	}
+	if err := json.Unmarshal(c.Body(), &body); err != nil || body.Subject == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject is required"})
+	}
+	role := roleAdmin
+	if body.Demote {
+		if s.isAdminSubject(body.Subject) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot demote the root admin"})
+		}
+		role = ""
+	}
+	if err := s.access.SetRole(c.Context(), body.Subject, role); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not set role"})
+	}
+	return c.JSON(fiber.Map{"subject": body.Subject, "role": role})
 }
 
 // aiFreeForSubject reports whether the shared-server AI is free (unmetered) for
@@ -99,11 +139,22 @@ func (s *Server) handleMe(c fiber.Ctx) error {
 	if s.aiFreeForSubject(c.Context(), subject) {
 		aiLimit = -1 // unlimited shared AI during closed beta (or admin)
 	}
+	// Badge: a founder is anyone approved during private beta (a pioneer); admins
+	// always carry the admin badge too.
+	founder := false
+	if rec, ok, err := s.access.Get(c.Context(), subject); err == nil && ok {
+		founder = s.cfg.App.PrivateBeta && rec.Status == accessApproved
+	}
+	if admin && s.cfg.App.PrivateBeta {
+		founder = true
+	}
 	return c.JSON(fiber.Map{
 		"version":       version.Version,
 		"subject":       subject,
 		"username":      claimsOf(c).Username,
 		"admin":         admin,
+		"root_admin":    s.isAdminSubject(subject),
+		"founder":       founder,
 		"approved":      approved,
 		"status":        status,
 		"open":          s.cfg.App.AccessOpen,
@@ -290,6 +341,19 @@ func (m *memAccess) SetTier(_ context.Context, subject, tier string) error {
 		rec.Status = accessApproved // setting a paid tier implies access
 	}
 	rec.Tier = tier
+	m.recs[subject] = rec
+	return nil
+}
+
+func (m *memAccess) SetRole(_ context.Context, subject, role string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec := m.recs[subject]
+	rec.Subject = subject
+	if rec.Status == "" {
+		rec.Status = accessApproved // an admin is implicitly approved
+	}
+	rec.Role = role
 	m.recs[subject] = rec
 	return nil
 }

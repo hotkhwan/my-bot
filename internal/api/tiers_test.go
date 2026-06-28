@@ -73,6 +73,43 @@ func TestPioneerPerkDuringClosedBeta(t *testing.T) {
 	}
 }
 
+func TestPromoteToAdmin(t *testing.T) {
+	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
+	root, _ := tk.Issue("tg:111", "root", "user")
+	member, _ := tk.Issue("tg:8", "member", "user")
+	cfg := testConfigWith(t, map[string]string{"TELEGRAM_ADMIN_USER_ID": "111"})
+	srv := NewServer(cfg, nil, testLogger(), WithTokenizer(tk))
+
+	post := func(tok, path string, body any) int {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, _ := srv.App().Test(req)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// Member is not admin; cannot promote anyone.
+	if getJSON(t, srv, "/api/me", member)["admin"] != false {
+		t.Fatal("member should not be admin")
+	}
+	if code := post(member, "/api/admin/make-admin", map[string]any{"subject": "tg:8"}); code != http.StatusForbidden {
+		t.Fatalf("member make-admin = %d, want 403", code)
+	}
+	// Root admin promotes the member → they become admin.
+	if code := post(root, "/api/admin/make-admin", map[string]any{"subject": "tg:8"}); code != http.StatusOK {
+		t.Fatalf("root make-admin = %d", code)
+	}
+	if getJSON(t, srv, "/api/me", member)["admin"] != true {
+		t.Fatal("promoted member should be admin")
+	}
+	// The root admin cannot be demoted.
+	if code := post(root, "/api/admin/make-admin", map[string]any{"subject": "tg:111", "demote": true}); code != http.StatusBadRequest {
+		t.Fatalf("demote root = %d, want 400", code)
+	}
+}
+
 func TestMissionRequiresActiveKey(t *testing.T) {
 	stub := stubKlines(t)
 	cfg := testConfigWith(t, map[string]string{"MARKETDATA_BASE_URL": stub.URL, "ACCESS_OPEN": "true"})

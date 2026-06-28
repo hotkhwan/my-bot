@@ -37,6 +37,10 @@ func (c crewAdmin) Revoke(ctx context.Context, subject string) error {
 	return c.store.Revoke(ctx, subject)
 }
 
+func (c crewAdmin) SetRole(ctx context.Context, subject, role string) error {
+	return c.store.SetRole(ctx, subject, role)
+}
+
 func (c crewAdmin) SetTier(ctx context.Context, subject, tier string) error {
 	return c.store.SetTier(ctx, subject, tier)
 }
@@ -93,6 +97,15 @@ func (m *mongoAccess) Approve(ctx context.Context, subject string) error {
 
 func (m *mongoAccess) Revoke(ctx context.Context, subject string) error {
 	update := bson.D{{Key: "$set", Value: bson.D{{Key: "status", Value: "revoked"}}}}
+	_, err := m.coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: subject}}, update, options.UpdateOne().SetUpsert(true))
+	return err
+}
+
+func (m *mongoAccess) SetRole(ctx context.Context, subject, role string) error {
+	update := bson.D{{Key: "$set", Value: bson.D{
+		{Key: "role", Value: role},
+		{Key: "status", Value: "approved"}, // an admin is implicitly approved
+	}}}
 	_, err := m.coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: subject}}, update, options.UpdateOne().SetUpsert(true))
 	return err
 }

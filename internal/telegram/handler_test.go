@@ -190,6 +190,7 @@ type fakeCrew struct {
 	approved []string
 	revoked  []string
 	tiers    map[string]string
+	roles    map[string]string
 }
 
 func (f *fakeCrew) Pending(context.Context) ([]CrewMember, error) { return f.pending, nil }
@@ -199,6 +200,13 @@ func (f *fakeCrew) Approve(_ context.Context, subject string) error {
 }
 func (f *fakeCrew) Revoke(_ context.Context, subject string) error {
 	f.revoked = append(f.revoked, subject)
+	return nil
+}
+func (f *fakeCrew) SetRole(_ context.Context, subject, role string) error {
+	if f.roles == nil {
+		f.roles = map[string]string{}
+	}
+	f.roles[subject] = role
 	return nil
 }
 func (f *fakeCrew) SetTier(_ context.Context, subject, tier string) error {

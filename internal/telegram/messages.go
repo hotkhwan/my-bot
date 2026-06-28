@@ -44,6 +44,7 @@ Admin:
 /approve <id> [plan]  approve (optional free|captain|commander)
 /reject <id>      reject / revoke a member
 /tier <id> <plan> set plan: free|captain|commander
+/makeadmin <id>   promote a member to admin
 
 Phase 2 management:
 be BTC

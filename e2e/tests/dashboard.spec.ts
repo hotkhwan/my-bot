@@ -35,7 +35,7 @@ test("login → goal paper run shows real stats", async ({ page }) => {
   await page.fill("#g-profit", "5");
   await page.fill("#g-capital", "100");
   await page.fill("#g-risk", "30");
-  await page.fill("#g-symbol", "BTC");
+  await page.selectOption("#g-symbol", "BTC");
   await page.selectOption("#g-strategy", "ema");
   await page.selectOption("#g-interval", "1h");
   await page.click("#g-run");
@@ -86,7 +86,7 @@ test("flight recorder logs the paper run, labeled and hashed", async ({ page }) 
   await registerAndLogin(page);
   await gotoTrade(page);
   await page.fill("#g-profit", "5");
-  await page.fill("#g-symbol", "BTC");
+  await page.selectOption("#g-symbol", "BTC");
   await page.click("#g-run");
   await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
 
@@ -103,7 +103,7 @@ test("community leaderboard aggregates the run; mission replay opens", async ({ 
   await registerAndLogin(page);
   await gotoTrade(page);
   await page.fill("#g-profit", "5");
-  await page.fill("#g-symbol", "BTC");
+  await page.selectOption("#g-symbol", "BTC");
   await page.click("#g-run");
   await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
 
@@ -127,7 +127,7 @@ test("goal run with AI toggle falls back gracefully (no key configured)", async 
 
   await page.check("#g-ai");
   await page.fill("#g-profit", "5");
-  await page.fill("#g-symbol", "BTC");
+  await page.selectOption("#g-symbol", "BTC");
   await page.click("#g-run");
 
   // AI is not configured in the harness → it must still produce a real run and

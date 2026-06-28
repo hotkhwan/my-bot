@@ -137,6 +137,8 @@
       /* info badge (ⓘ) — replaces long inline hints */
       .ibadge { display: inline-flex; align-items: center; justify-content: center; width: 1.05rem; height: 1.05rem; border-radius: 50%; border: 1px solid var(--card-border); color: var(--muted); font-size: 0.62rem; cursor: pointer; vertical-align: middle; margin-left: 0.25rem; user-select: none; flex: 0 0 auto; }
       .ibadge:hover { color: var(--primary); border-color: var(--primary); }
+      /* award/role badge pill (Admin / Founder) */
+      .awb { display: inline-block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.3px; border: 1px solid var(--card-border); border-radius: 0.4rem; padding: 0.1rem 0.4rem; }
       /* toast — shows an info badge's detail, webview-safe */
       .toast { position: fixed; left: 50%; bottom: 5.5rem; transform: translateX(-50%); z-index: 80; max-width: 22rem; width: calc(100% - 2rem); background: #0b1220; border: 1px solid var(--card-border); border-radius: 0.7rem; padding: 0.7rem 0.85rem; font-size: 0.82rem; line-height: 1.45; color: var(--text); box-shadow: 0 12px 36px -10px rgba(0,0,0,0.8); text-align: center; }
       /* type-or-pick combobox (replaces flaky datalist) */
@@ -337,6 +339,7 @@
       <!-- HOME -->
       <section id="view-home" class="hidden">
         <p class="greeting" id="home-greeting">Good evening, Captain 👋</p>
+        <div id="home-badges" style="margin:-0.1rem 0 0.3rem"></div>
         <div class="hero">
           <div class="hlabel">Today's Profit</div>
           <div class="hnum mono pos" id="home-pnl">—</div>
@@ -404,7 +407,7 @@
             </div>
             <div class="grid2">
               <div><label for="g-risk">Max risk %<span class="ibadge" data-info="Max risk % is also your live-trade leverage: 5 = 5x. Lower is safer — it caps how much of your capital a single trade can lose.">ⓘ</span></label><input id="g-risk" inputmode="numeric" placeholder="5" value="5" autocomplete="off" /></div>
-              <div><label for="g-symbol">Symbol<span class="ibadge" data-info="Type any Binance Futures coin, or tap ▾ to pick a ★ favourite.">ⓘ</span></label><div class="combo"><input id="g-symbol" placeholder="BTC" value="BTC" autocomplete="off" /><button type="button" id="g-symbol-caret" class="combo-caret">▾</button></div><div id="g-symbol-menu" class="combo-menu hidden"></div></div>
+              <div><label for="g-symbol">Symbol<span class="ibadge" data-info="Pick from your symbols. To add a coin, search & ★ it in the Coins panel below.">ⓘ</span></label><select id="g-symbol"><option value="BTC">BTC</option></select></div>
             </div>
             <div class="grid2">
               <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
@@ -554,6 +557,12 @@
             <button class="ghost" id="revoke-set" style="flex:0 0 auto;width:auto;padding:0.4rem 0.9rem">Revoke</button>
           </div>
           <div class="msg" id="revoke-msg"></div>
+          <label for="admin-subject" style="margin-top:0.9rem">Promote a member to admin 👑</label>
+          <div class="cmdrow">
+            <input id="admin-subject" placeholder="subject (e.g. tg:468848033)" autocomplete="off" />
+            <button class="primary" id="admin-make" style="flex:0 0 auto;width:auto;padding:0.4rem 0.9rem">Make admin</button>
+          </div>
+          <div class="msg" id="admin-make-msg"></div>
         </div>
         <div class="card" id="status">Loading status…</div>
       </section>
@@ -644,10 +653,7 @@
       // Any ⓘ badge shows its data-info on tap; tapping elsewhere closes menus.
       document.addEventListener("click", (e) => {
         const b = e.target.closest(".ibadge");
-        if (b) { e.preventDefault(); showToast(b.getAttribute("data-info") || ""); return; }
-        if (!e.target.closest(".combo") && !e.target.closest(".combo-menu")) {
-          const m = $("g-symbol-menu"); if (m) m.classList.add("hidden");
-        }
+        if (b) { e.preventDefault(); showToast(b.getAttribute("data-info") || ""); }
       });
       // Realtime poll interval by plan: Crew(free) 8s · Captain 3s · Commander 1s.
       function pollMs() { const t = (me && me.tier) || "free"; return t === "commander" ? 1000 : t === "captain" ? 3000 : 8000; }
@@ -704,8 +710,16 @@
         const box = $("brand-ver"); if (!box) return;
         box.textContent = me && me.version ? "v" + me.version : "";
       }
+      function renderBadges() {
+        const box = $("home-badges"); if (!box || !me) return;
+        const b = [];
+        if (me.admin) b.push('<span class="awb" style="border-color:#FFD166;color:#FFD166">👑 ' + (me.root_admin ? "Admin" : "Admin") + "</span>");
+        if (me.founder) b.push('<span class="awb" style="border-color:#B197FC;color:#B197FC">🟣 Founder</span>');
+        box.innerHTML = b.join(" ");
+      }
       function renderTier() {
         renderVersion();
+        renderBadges();
         if (!me || !$("home-tier")) return;
         const aiTxt = me.ai_limit < 0 ? "unlimited AI" : `${me.ai_used || 0}/${me.ai_limit} AI runs`;
         const mTxt = me.mission_limit < 0 ? "unlimited missions" : `${me.mission_used || 0}/${me.mission_limit} live missions`;
@@ -726,6 +740,14 @@
         $("revoke-msg").textContent = r.ok ? `Revoked ${d.revoked}` : d.error || "Failed";
         $("revoke-msg").style.color = r.ok ? "var(--profit)" : "var(--loss)";
         if (r.ok) loadAdminPending();
+      };
+      if ($("admin-make")) $("admin-make").onclick = async () => {
+        const subject = $("admin-subject").value.trim();
+        if (!subject || !confirm("Make " + subject + " an admin?")) return;
+        const r = await fetch("/api/admin/make-admin", { method: "POST", headers: authHeaders(), body: JSON.stringify({ subject }) });
+        const d = await r.json().catch(() => ({}));
+        $("admin-make-msg").textContent = r.ok ? `👑 ${d.subject} is now an admin` : d.error || "Failed";
+        $("admin-make-msg").style.color = r.ok ? "var(--profit)" : "var(--loss)";
       };
 
       function showView(name) {
@@ -1085,41 +1107,30 @@
         box.querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.up, -1)));
         box.querySelectorAll("[data-down]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.down, 1)));
         box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => removeFav(b.dataset.rm)));
+        renderSymbolOptions();
       }
-      // ---- Symbol combobox: pulls ONLY from the user's own symbols (favourites,
-      // synced server-side) — no hardcoded coin list. New users are seeded once.
-      function symbolMenuItems(filter) {
+      // The Symbol field is a NATIVE <select> (works everywhere, matches the other
+      // dropdowns), populated ONLY from the user's own symbols (favourites) — no
+      // hardcoded coin list. Hottest (community edge) first; current pick kept.
+      function renderSymbolOptions() {
+        const sel = $("g-symbol"); if (!sel) return;
         const edgeOf = (s) => { const c = coinEdge[normSym(s)] || coinEdge[s]; return c ? Number(c.edge) || 0 : -1; };
-        const favs = getFavs().map((s) => String(s).replace(/USDT$/, "")).sort((a, b) => edgeOf(b) - edgeOf(a));
-        const seen = new Set(), list = [];
-        favs.forEach((s) => { if (s && !seen.has(s)) { seen.add(s); list.push({ s, fav: true }); } });
-        const q = (filter || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-        return list.filter((x) => x.s.includes(q)).slice(0, 60);
+        const seen = new Set(), syms = [];
+        getFavs().map((s) => String(s).replace(/USDT$/, "")).forEach((s) => { if (s && !seen.has(s)) { seen.add(s); syms.push(s); } });
+        syms.sort((a, b) => edgeOf(b) - edgeOf(a));
+        const cur = sel.value;
+        if (!syms.length) { sel.innerHTML = '<option value="">No symbols — add in Coins ↓</option>'; return; }
+        sel.innerHTML = syms.map((s) => { const e = edgeOf(s); return `<option value="${escapeHtml(s)}">${escapeHtml(s)}${e >= 0 ? " · ⭐" + e + "%" : ""}</option>`; }).join("");
+        if (syms.includes(cur)) sel.value = cur;
       }
-      // showAll=true (caret/focus) lists every favourite + popular coin; only the
-      // typing path filters by what's in the box.
-      function openSymbolMenu(showAll) {
-        const menu = $("g-symbol-menu"); if (!menu) return;
-        const items = symbolMenuItems(showAll ? "" : $("g-symbol").value.trim());
-        if (!items.length) {
-          if (showAll) {
-            menu.innerHTML = '<div class="combo-item" style="color:var(--muted);cursor:default">No symbols yet — add them in “Coins” below ↓</div>';
-            menu.classList.remove("hidden");
-          } else { menu.classList.add("hidden"); }
-          return;
-        }
-        menu.innerHTML = items.map((x) => `<div class="combo-item" data-sym="${escapeHtml(x.s)}"><span>${x.fav ? "★ " : ""}${escapeHtml(x.s)}</span>${x.fav ? '<span style="color:var(--muted);font-size:0.75rem">favourite</span>' : ""}</div>`).join("");
-        menu.querySelectorAll("[data-sym]").forEach((el) => (el.onclick = () => { $("g-symbol").value = el.dataset.sym; menu.classList.add("hidden"); }));
-        menu.classList.remove("hidden");
-      }
-      if ($("g-symbol-caret")) $("g-symbol-caret").onclick = (e) => { e.stopPropagation(); const m = $("g-symbol-menu"); m.classList.contains("hidden") ? openSymbolMenu(true) : m.classList.add("hidden"); };
-      if ($("g-symbol")) {
-        $("g-symbol").addEventListener("input", () => openSymbolMenu(false));
-        $("g-symbol").addEventListener("focus", () => openSymbolMenu(true));
-      }
-      // Tapping a favourite loads it into the Goal form's symbol.
+      // Tapping a coin in Coins selects it in the Symbol dropdown (adding the option
+      // if it isn't a favourite yet) and jumps to the Goal.
       function loadIntoGoal(coin) {
-        $("g-symbol").value = String(coin).replace(/USDT$/, "");
+        const sym = String(coin).replace(/USDT$/, ""), sel = $("g-symbol");
+        if (sel && !Array.from(sel.options).some((o) => o.value === sym)) {
+          sel.insertAdjacentHTML("afterbegin", `<option value="${escapeHtml(sym)}">${escapeHtml(sym)}</option>`);
+        }
+        if (sel) sel.value = sym;
         navigate("orders");
         $("g-run").scrollIntoView({ behavior: "smooth", block: "center" });
       }

@@ -58,6 +58,7 @@ type CrewAdmin interface {
 	Approve(ctx context.Context, subject string) error
 	Revoke(ctx context.Context, subject string) error
 	SetTier(ctx context.Context, subject, tier string) error
+	SetRole(ctx context.Context, subject, role string) error
 }
 
 // WithCrew enables the admin-only /pending and /approve commands.
@@ -219,6 +220,10 @@ func (h *Handler) Handle(ctx context.Context, sender Sender, update *models.Upda
 		return h.handleRevoke(ctx, sender, message.Chat.ID, userID, commandArg(text))
 	case "/tier":
 		return h.handleTier(ctx, sender, message.Chat.ID, userID, commandRest(text))
+	case "/makeadmin":
+		return h.handleMakeAdmin(ctx, sender, message.Chat.ID, userID, commandArg(text), true)
+	case "/removeadmin":
+		return h.handleMakeAdmin(ctx, sender, message.Chat.ID, userID, commandArg(text), false)
 	}
 
 	intent, err := h.parser.Parse(text)
@@ -684,6 +689,31 @@ func (h *Handler) handleTier(ctx context.Context, sender Sender, chatID, userID 
 		return h.sendText(ctx, sender, chatID, "Could not set tier.")
 	}
 	return h.sendText(ctx, sender, chatID, "✅ tg:"+id+" is now on the "+tier+" plan.")
+}
+
+// handleMakeAdmin promotes (promote=true) or demotes a member to/from admin.
+func (h *Handler) handleMakeAdmin(ctx context.Context, sender Sender, chatID, userID int64, arg string, promote bool) error {
+	if h.adminUserID == 0 || userID != h.adminUserID {
+		return h.sendText(ctx, sender, chatID, "Admin only.")
+	}
+	if h.crew == nil {
+		return h.sendText(ctx, sender, chatID, "Crew approvals are not enabled.")
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(arg, "tg:"))
+	if id == "" {
+		return h.sendText(ctx, sender, chatID, "Usage: /makeadmin <telegram id>")
+	}
+	role := "admin"
+	if !promote {
+		role = ""
+	}
+	if err := h.crew.SetRole(ctx, "tg:"+id, role); err != nil {
+		return h.sendText(ctx, sender, chatID, "Could not change the role.")
+	}
+	if promote {
+		return h.sendText(ctx, sender, chatID, "👑 tg:"+id+" is now an admin — they can approve crew and manage tiers.")
+	}
+	return h.sendText(ctx, sender, chatID, "tg:"+id+" is no longer an admin.")
 }
 
 func confirmationKeyboard(id string) models.ReplyMarkup {
