@@ -73,6 +73,35 @@ func TestPioneerPerkDuringClosedBeta(t *testing.T) {
 	}
 }
 
+func TestAdminEndpointsRejectNonAdmin(t *testing.T) {
+	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
+	member, _ := tk.Issue("tg:8", "member", "user")
+	// ACCESS_OPEN so the user is "approved" yet still NOT admin — the strongest case.
+	srv := NewServer(testConfigWith(t, map[string]string{"ACCESS_OPEN": "true", "TELEGRAM_ADMIN_USER_ID": "111"}), nil, testLogger(), WithTokenizer(tk))
+
+	do := func(method, path string) int {
+		req := httptest.NewRequest(method, path, bytes.NewReader([]byte(`{"subject":"tg:9","tier":"captain"}`)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+member)
+		resp, _ := srv.App().Test(req)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	cases := []struct{ method, path string }{
+		{http.MethodGet, "/api/admin/members"},
+		{http.MethodGet, "/api/admin/pending"},
+		{http.MethodPost, "/api/admin/approve"},
+		{http.MethodPost, "/api/admin/revoke"},
+		{http.MethodPost, "/api/admin/make-admin"},
+		{http.MethodPost, "/api/admin/tier"},
+	}
+	for _, c := range cases {
+		if code := do(c.method, c.path); code != http.StatusForbidden {
+			t.Errorf("%s %s as non-admin = %d, want 403", c.method, c.path, code)
+		}
+	}
+}
+
 func TestPromoteToAdmin(t *testing.T) {
 	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
 	root, _ := tk.Issue("tg:111", "root", "user")
