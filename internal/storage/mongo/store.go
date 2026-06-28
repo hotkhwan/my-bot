@@ -28,11 +28,17 @@ type Store struct {
 	goalRuns      *mongodriver.Collection
 	access        *mongodriver.Collection
 	aiKeys        *mongodriver.Collection
+	favourites    *mongodriver.Collection
 }
 
 // AIKeysCollection exposes the per-user AI-key collection.
 func (s *Store) AIKeysCollection() *mongodriver.Collection {
 	return s.aiKeys
+}
+
+// FavouritesCollection exposes the per-user favourite-coins collection.
+func (s *Store) FavouritesCollection() *mongodriver.Collection {
+	return s.favourites
 }
 
 // GoalRunsCollection exposes the goal_runs collection so the app layer can wire
@@ -80,6 +86,7 @@ func Connect(ctx context.Context, cfg Config) (*Store, error) {
 		goalRuns:      db.Collection("goal_runs"),
 		access:        db.Collection("crew_access"),
 		aiKeys:        db.Collection("ai_keys"),
+		favourites:    db.Collection("favourites"),
 	}
 	if err := store.ensureIndexes(ctx); err != nil {
 		_ = client.Disconnect(ctx)

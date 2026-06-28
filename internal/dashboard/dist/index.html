@@ -729,7 +729,7 @@
         refreshKeyStatus();
         loadAIKey();
         connectStream();
-        renderFavs();
+        loadFavourites();
         startPricePolling();
         loadGoalHistory();
         loadLeaderboard();
@@ -975,8 +975,24 @@
       function stopPricePolling() { if (priceTimer) { clearInterval(priceTimer); priceTimer = null; } }
 
       // ---- coins / favourites ----
+      // Favourites live on the server (keyed by user) so they follow you across
+      // the web and the Telegram mini app; localStorage is just a fast local cache.
       function getFavs() { try { return JSON.parse(localStorage.getItem("favs") || "[]"); } catch (_) { return []; } }
-      function saveFavs(f) { localStorage.setItem("favs", JSON.stringify(f)); renderFavs(); loadPrices(f).then(renderFavs); }
+      function syncFavs(f) { fetch("/api/favourites", { method: "POST", headers: authHeaders(), body: JSON.stringify({ symbols: f }) }).catch(() => {}); }
+      function saveFavs(f) { localStorage.setItem("favs", JSON.stringify(f)); syncFavs(f); renderFavs(); loadPrices(f).then(renderFavs); }
+      async function loadFavourites() {
+        try {
+          const d = await (await fetch("/api/favourites", { headers: authHeaders() })).json();
+          const server = d.symbols || [];
+          if (server.length) {
+            localStorage.setItem("favs", JSON.stringify(server)); // server wins
+          } else if (getFavs().length) {
+            syncFavs(getFavs()); // migrate this device's old localStorage favs up
+          }
+        } catch (_) {}
+        renderFavs();
+        loadPrices(getFavs()).then(renderFavs);
+      }
       function addFav(s) { const f = getFavs(); if (!f.includes(s)) { f.push(s); saveFavs(f); } }
       function removeFav(s) { saveFavs(getFavs().filter((x) => x !== s)); }
       function moveFav(i, d) { const f = getFavs(), j = i + d; if (j < 0 || j >= f.length) return; [f[i], f[j]] = [f[j], f[i]]; saveFavs(f); }

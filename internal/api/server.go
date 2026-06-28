@@ -64,6 +64,7 @@ type Server struct {
 	goalRuns    GoalRunStore
 	access      AccessStore
 	aiSecrets   AISecretStore
+	favourites  FavouritesStore
 	keyring     *auth.Keyring
 	usage       *memUsage
 	logger      *slog.Logger
@@ -124,6 +125,12 @@ func WithAccessStore(store AccessStore) Option {
 	return func(s *Server) { s.access = store }
 }
 
+// WithFavourites persists per-user favourite coins so they follow the user
+// across clients (web + Telegram mini app), not just one device's localStorage.
+func WithFavourites(store FavouritesStore) Option {
+	return func(s *Server) { s.favourites = store }
+}
+
 // WithAISecrets enables per-user (bring-your-own) AI keys, sealed with keyring.
 func WithAISecrets(store AISecretStore, keyring *auth.Keyring) Option {
 	return func(s *Server) { s.aiSecrets = store; s.keyring = keyring }
@@ -156,6 +163,9 @@ func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Log
 	}
 	if server.aiSecrets == nil {
 		server.aiSecrets = newMemAISecrets()
+	}
+	if server.favourites == nil {
+		server.favourites = newMemFavourites()
 	}
 	if server.usage == nil {
 		server.usage = newMemUsage()
@@ -214,6 +224,8 @@ func (s *Server) routes() {
 	s.app.Post("/api/confirm", s.requireAuth, s.handleConfirm)
 	s.app.Get("/api/symbols", s.requireAuth, s.handleSymbols)
 	s.app.Get("/api/prices", s.requireAuth, s.handlePrices)
+	s.app.Get("/api/favourites", s.requireAuth, s.handleGetFavourites)
+	s.app.Post("/api/favourites", s.requireAuth, s.handleSetFavourites)
 	s.app.Post("/api/mission/prepare", s.requireAuth, s.handleMissionPrepare)
 	s.app.Post("/api/goal/run", s.requireAuth, s.handleGoalRun)
 	s.app.Get("/api/goal/history", s.requireAuth, s.handleGoalHistory)
