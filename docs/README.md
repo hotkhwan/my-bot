@@ -6,6 +6,9 @@ user-facing or trading features.
 - [legal/thai-sec-design-principles.md](legal/thai-sec-design-principles.md) — **Legal by
   Design**: forbidden language, what we must do, marketing wording, and the **Legal Gate**
   (5 questions every feature PR must answer).
+- [architecture/subscription-founder.md](architecture/subscription-founder.md) — **Launch / Founder
+  plan**: PRIVATE_BETA invite-only; Founder Badge for life but Commander time-boxed (free until GA
+  → Captain lifetime); `Subscription` schema; Mission Zero caps (32/64/128).
 - [architecture/secret-model.md](architecture/secret-model.md) — **Secret model**: transparent
   results / secret method; public-paper vs private-execution; 3-service split
   (`anny-api` / `anny-execution-engine` / `anny-skill-model`); decision-only internal API;

@@ -95,10 +95,10 @@ func (s *Server) tierOfSubject(ctx context.Context, subject string) string {
 			if rec.Tier == TierCaptain || rec.Tier == TierCommander {
 				return rec.Tier
 			}
-			// Pioneer perk: while the public free tier isn't open yet
-			// (FREE_SUB_OPEN=false), every approved crew member runs as Commander
-			// (unlimited). After it opens, they fall back to their stored tier.
-			if !s.cfg.App.FreeSubOpen && rec.Status == accessApproved {
+			// Pioneer perk: during private beta (PRIVATE_BETA=true), every approved
+			// crew member runs as Commander (unlimited). After the public launch
+			// they fall back to their stored tier.
+			if s.cfg.App.PrivateBeta && rec.Status == accessApproved {
 				return TierCommander
 			}
 			if rec.Tier != "" {

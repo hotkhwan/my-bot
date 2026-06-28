@@ -1056,6 +1056,11 @@
             localStorage.setItem("favs", JSON.stringify(server)); // server wins
           } else if (getFavs().length) {
             syncFavs(getFavs()); // migrate this device's old localStorage favs up
+          } else {
+            // Brand-new user: seed an editable starter list (their symbols, not a
+            // hardcoded picker) so the Symbol field isn't empty. They can change it.
+            const seed = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+            localStorage.setItem("favs", JSON.stringify(seed)); syncFavs(seed);
           }
         } catch (_) {}
         renderFavs();
@@ -1081,23 +1086,28 @@
         box.querySelectorAll("[data-down]").forEach((b) => (b.onclick = () => moveFav(+b.dataset.down, 1)));
         box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => removeFav(b.dataset.rm)));
       }
-      // ---- Symbol combobox (type-or-pick; webview-safe, replaces datalist) ----
-      const POPULAR_COINS = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "TON", "PEPE", "SUI"];
+      // ---- Symbol combobox: pulls ONLY from the user's own symbols (favourites,
+      // synced server-side) — no hardcoded coin list. New users are seeded once.
       function symbolMenuItems(filter) {
         const edgeOf = (s) => { const c = coinEdge[normSym(s)] || coinEdge[s]; return c ? Number(c.edge) || 0 : -1; };
         const favs = getFavs().map((s) => String(s).replace(/USDT$/, "")).sort((a, b) => edgeOf(b) - edgeOf(a));
         const seen = new Set(), list = [];
-        favs.forEach((s) => { if (!seen.has(s)) { seen.add(s); list.push({ s, fav: true }); } });
-        POPULAR_COINS.forEach((s) => { if (!seen.has(s)) { seen.add(s); list.push({ s, fav: false }); } });
+        favs.forEach((s) => { if (s && !seen.has(s)) { seen.add(s); list.push({ s, fav: true }); } });
         const q = (filter || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-        return list.filter((x) => x.s.includes(q)).slice(0, 40);
+        return list.filter((x) => x.s.includes(q)).slice(0, 60);
       }
       // showAll=true (caret/focus) lists every favourite + popular coin; only the
       // typing path filters by what's in the box.
       function openSymbolMenu(showAll) {
         const menu = $("g-symbol-menu"); if (!menu) return;
         const items = symbolMenuItems(showAll ? "" : $("g-symbol").value.trim());
-        if (!items.length) { menu.classList.add("hidden"); return; }
+        if (!items.length) {
+          if (showAll) {
+            menu.innerHTML = '<div class="combo-item" style="color:var(--muted);cursor:default">No symbols yet — add them in “Coins” below ↓</div>';
+            menu.classList.remove("hidden");
+          } else { menu.classList.add("hidden"); }
+          return;
+        }
         menu.innerHTML = items.map((x) => `<div class="combo-item" data-sym="${escapeHtml(x.s)}"><span>${x.fav ? "★ " : ""}${escapeHtml(x.s)}</span>${x.fav ? '<span style="color:var(--muted);font-size:0.75rem">favourite</span>' : ""}</div>`).join("");
         menu.querySelectorAll("[data-sym]").forEach((el) => (el.onclick = () => { $("g-symbol").value = el.dataset.sym; menu.classList.add("hidden"); }));
         menu.classList.remove("hidden");

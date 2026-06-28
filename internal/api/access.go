@@ -58,14 +58,14 @@ func (s *Server) isAdminSubject(subject string) bool {
 }
 
 // aiFreeForSubject reports whether the shared-server AI is free (unmetered) for
-// this user. During closed beta (FreeSubOpen=false) the admin and every approved
+// this user. During private beta (PRIVATE_BETA=true) the admin and every approved
 // crew member get unlimited shared AI; once the public free tier opens, only the
 // admin (Commander) stays unlimited and everyone else is metered by tier.
 func (s *Server) aiFreeForSubject(ctx context.Context, subject string) bool {
 	if s.isAdminSubject(subject) {
 		return true
 	}
-	if s.cfg.App.FreeSubOpen {
+	if !s.cfg.App.PrivateBeta {
 		return false
 	}
 	rec, ok, err := s.access.Get(ctx, subject)

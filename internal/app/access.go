@@ -24,7 +24,7 @@ func (c crewAdmin) Pending(ctx context.Context) ([]telegram.CrewMember, error) {
 	}
 	out := make([]telegram.CrewMember, 0, len(recs))
 	for _, r := range recs {
-		out = append(out, telegram.CrewMember{Subject: r.Subject, Name: r.Name})
+		out = append(out, telegram.CrewMember{Subject: r.Subject, Name: r.Name, RequestedAt: r.RequestedAt})
 	}
 	return out, nil
 }

@@ -198,7 +198,7 @@ func (s *Server) aiBias(ctx context.Context, subject, symbol string, price float
 	}
 	// A user's own key isn't metered (it's their quota). The shared server AI is
 	// metered too — except it's free for the admin and approved crew until the
-	// public free tier opens (FreeSubOpen).
+	// public free tier opens (PRIVATE_BETA=false).
 	meter := !byo && !s.aiFreeForSubject(ctx, subject)
 	if meter {
 		if allowed, msg := s.allow(ctx, subject, "ai"); !allowed {

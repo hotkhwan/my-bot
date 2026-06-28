@@ -46,8 +46,9 @@ type Handler struct {
 
 // CrewMember is a pending access request, for the admin /pending list.
 type CrewMember struct {
-	Subject string
-	Name    string
+	Subject     string
+	Name        string
+	RequestedAt time.Time
 }
 
 // CrewAdmin lets the admin list and approve crew-access requests from Telegram.
@@ -213,8 +214,8 @@ func (h *Handler) Handle(ctx context.Context, sender Sender, update *models.Upda
 	case "/pending":
 		return h.handlePending(ctx, sender, message.Chat.ID, userID)
 	case "/approve":
-		return h.handleApprove(ctx, sender, message.Chat.ID, userID, commandArg(text))
-	case "/unapprove", "/revoke":
+		return h.handleApprove(ctx, sender, message.Chat.ID, userID, commandRest(text))
+	case "/unapprove", "/revoke", "/reject":
 		return h.handleRevoke(ctx, sender, message.Chat.ID, userID, commandArg(text))
 	case "/tier":
 		return h.handleTier(ctx, sender, message.Chat.ID, userID, commandRest(text))
@@ -578,9 +579,27 @@ func (h *Handler) handlePending(ctx context.Context, sender Sender, chatID, user
 	b.WriteString("🛡 Pending crew requests:\n")
 	for _, m := range members {
 		id := strings.TrimPrefix(m.Subject, "tg:")
-		fmt.Fprintf(&b, "\n• %s — /approve %s", m.Name, id)
+		when := ""
+		if !m.RequestedAt.IsZero() {
+			when = " · " + humanizeSince(time.Since(m.RequestedAt))
+		}
+		fmt.Fprintf(&b, "\n• %s (tg:%s)%s\n   /approve %s · /approve %s captain · /reject %s", m.Name, id, when, id, id, id)
 	}
 	return h.sendText(ctx, sender, chatID, b.String())
+}
+
+// humanizeSince renders a duration as "just now / 5m ago / 2h ago / 3d ago".
+func humanizeSince(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return strconv.Itoa(int(d.Minutes())) + "m ago"
+	case d < 24*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + "h ago"
+	default:
+		return strconv.Itoa(int(d.Hours()/24)) + "d ago"
+	}
 }
 
 // handleApprove approves a user by Telegram id (admin only): /approve 12345.
@@ -591,12 +610,29 @@ func (h *Handler) handleApprove(ctx context.Context, sender Sender, chatID, user
 	if h.crew == nil {
 		return h.sendText(ctx, sender, chatID, "Crew approvals are not enabled.")
 	}
-	id := strings.TrimSpace(strings.TrimPrefix(arg, "tg:"))
+	fields := strings.Fields(arg)
+	if len(fields) == 0 {
+		return h.sendText(ctx, sender, chatID, "Usage: /approve <telegram id> [free|captain|commander]  (see /pending)")
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(fields[0], "tg:"))
 	if id == "" {
-		return h.sendText(ctx, sender, chatID, "Usage: /approve <telegram id>  (see /pending)")
+		return h.sendText(ctx, sender, chatID, "Usage: /approve <telegram id> [free|captain|commander]")
 	}
 	if err := h.crew.Approve(ctx, "tg:"+id); err != nil {
 		return h.sendText(ctx, sender, chatID, "Could not approve.")
+	}
+	// Optional plan: /approve 102 captain
+	if len(fields) > 1 {
+		plan := strings.ToLower(fields[1])
+		switch plan {
+		case "free", "captain", "commander":
+			if err := h.crew.SetTier(ctx, "tg:"+id, plan); err != nil {
+				return h.sendText(ctx, sender, chatID, "Approved, but could not set the plan.")
+			}
+			return h.sendText(ctx, sender, chatID, "✅ Approved tg:"+id+" on the "+plan+" plan.")
+		default:
+			return h.sendText(ctx, sender, chatID, "✅ Approved tg:"+id+" (plan must be free|captain|commander; ignored).")
+		}
 	}
 	return h.sendText(ctx, sender, chatID, "✅ Approved tg:"+id+" — they now have full access.")
 }

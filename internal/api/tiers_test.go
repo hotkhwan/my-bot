@@ -40,7 +40,7 @@ func TestSharedAIFreeForApprovedCrew(t *testing.T) {
 	}
 
 	// Public free launch (FreeSubOpen=true): the same user is metered by tier.
-	open := NewServer(testConfigWith(t, map[string]string{"FREE_SUB_OPEN": "true"}), nil, testLogger(), WithTokenizer(tk))
+	open := NewServer(testConfigWith(t, map[string]string{"PRIVATE_BETA": "false"}), nil, testLogger(), WithTokenizer(tk))
 	if err := open.access.Approve(context.Background(), "tg:5"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -65,8 +65,8 @@ func TestPioneerPerkDuringClosedBeta(t *testing.T) {
 		t.Fatalf("explicit captain should win, got %v", me["tier"])
 	}
 
-	// Public launch (FREE_SUB_OPEN=true): a plain approved user falls to Crew.
-	open := NewServer(testConfigWith(t, map[string]string{"FREE_SUB_OPEN": "true"}), nil, testLogger(), WithTokenizer(tk))
+	// Public launch (PRIVATE_BETA=false): a plain approved user falls to Crew.
+	open := NewServer(testConfigWith(t, map[string]string{"PRIVATE_BETA": "false"}), nil, testLogger(), WithTokenizer(tk))
 	open.access.Approve(context.Background(), "tg:7")
 	if me := getJSON(t, open, "/api/me", user); me["tier"] != "free" {
 		t.Fatalf("post-launch approved tier = %v, want free (Crew)", me["tier"])
