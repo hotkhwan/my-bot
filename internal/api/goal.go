@@ -75,7 +75,7 @@ const (
 	goalMaxBars     = 1000
 	goalMinBars     = 60
 	goalDefaultBars = 500
- 	goalHistoryMax  = 200
+	goalHistoryMax  = 200
 )
 
 // handleGoalRun runs a paper goal over real candles and returns rich stats.
@@ -96,7 +96,7 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 	}
 	strategy := "ema"
 	switch req.Strategy {
-	case "rsi", "macd", "sma", "breakout":
+	case "rsi", "macd", "sma", "breakout", "auto":
 		strategy = req.Strategy
 	}
 	bars := req.Bars

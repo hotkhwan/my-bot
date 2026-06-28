@@ -61,7 +61,7 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	}
 	strategyName := "ema"
 	switch req.Strategy {
-	case "rsi", "macd", "sma", "breakout":
+	case "rsi", "macd", "sma", "breakout", "auto":
 		strategyName = req.Strategy
 	}
 

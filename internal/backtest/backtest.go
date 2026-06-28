@@ -276,6 +276,48 @@ func (s BreakoutStrategy) Evaluate(history []float64) Signal {
 	}
 }
 
+// AutoVoteStrategy mixes several strategies and goes with the majority: at each
+// bar every member votes Long/Short/Flat and the side with the most votes wins
+// (ties → Flat). Because the members disagree at different times, consecutive
+// trades are effectively driven by whichever strategies happen to agree — a
+// simple ensemble, so no single rule has to be right all the time.
+type AutoVoteStrategy struct {
+	Members []Strategy
+}
+
+func (a AutoVoteStrategy) Name() string { return "auto" }
+
+func (a AutoVoteStrategy) Evaluate(history []float64) Signal {
+	longs, shorts := 0, 0
+	for _, m := range a.Members {
+		switch m.Evaluate(history) {
+		case Long:
+			longs++
+		case Short:
+			shorts++
+		}
+	}
+	switch {
+	case longs > shorts:
+		return Long
+	case shorts > longs:
+		return Short
+	default:
+		return Flat
+	}
+}
+
+// DefaultEnsemble returns the standard mix used by the "auto" strategy.
+func DefaultEnsemble() AutoVoteStrategy {
+	return AutoVoteStrategy{Members: []Strategy{
+		EMACrossStrategy{Fast: 12, Slow: 26},
+		RSIReversionStrategy{Period: 14, Low: 30, High: 70},
+		MACDStrategy{Fast: 12, Slow: 26, Signal: 9},
+		SMACrossStrategy{Fast: 10, Slow: 30},
+		BreakoutStrategy{Period: 20},
+	}}
+}
+
 // sma returns the simple moving average of the last period values.
 func sma(values []float64, period int) (float64, bool) {
 	if period <= 0 || len(values) < period {

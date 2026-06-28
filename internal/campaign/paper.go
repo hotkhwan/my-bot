@@ -83,6 +83,8 @@ func StrategyFor(name string) backtest.Strategy {
 		return backtest.SMACrossStrategy{Fast: 10, Slow: 30}
 	case "breakout", "donchian":
 		return backtest.BreakoutStrategy{Period: 20}
+	case "auto", "mix", "ensemble":
+		return backtest.DefaultEnsemble()
 	default:
 		return backtest.EMACrossStrategy{Fast: 12, Slow: 26}
 	}

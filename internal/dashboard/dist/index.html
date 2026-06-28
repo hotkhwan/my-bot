@@ -394,8 +394,8 @@
               <div><label for="g-symbol">Symbol <span style="color:var(--muted);font-weight:400">· pick a favourite</span></label><input id="g-symbol" list="g-favlist" placeholder="BTC — or ★ a coin below" value="BTC" autocomplete="off" /><datalist id="g-favlist"></datalist></div>
             </div>
             <div class="grid2">
-              <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
-              <div><label for="g-interval">Timeframe</label><select id="g-interval"><option value="15m">15m</option><option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option></select></div>
+              <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
+              <div><label for="g-interval">Timeframe</label><select id="g-interval"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option></select></div>
             </div>
             <label class="gai"><input type="checkbox" id="g-ai" checked /> Let AI pick the side (per run)</label>
             <button class="primary" id="g-run" type="button">Run goal (paper)</button>
@@ -1202,8 +1202,8 @@
           renderReco(strats, coins, d.total_runs || 0);
         } catch (e) { $("comm-strats").textContent = "Could not load community stats."; }
       }
-      const stratValue = { ema_cross: "ema", rsi_reversion: "rsi", macd: "macd", sma_cross: "sma", breakout: "breakout" };
-      const KNOWN_STRATS = ["ema_cross", "rsi_reversion", "macd", "sma_cross", "breakout"];
+      const stratValue = { ema_cross: "ema", rsi_reversion: "rsi", macd: "macd", sma_cross: "sma", breakout: "breakout", auto: "auto" };
+      const KNOWN_STRATS = ["ema_cross", "rsi_reversion", "macd", "sma_cross", "breakout", "auto"];
       // Recommend only a community-PROVEN (green) strategy/coin. When nothing is
       // green, don't push a money-loser — suggest exploring a strategy the crew
       // hasn't tested yet (or the least-bad), and leave the coin open. Still
