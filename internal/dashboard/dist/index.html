@@ -1092,16 +1092,21 @@
         const q = (filter || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
         return list.filter((x) => x.s.includes(q)).slice(0, 40);
       }
-      function openSymbolMenu() {
+      // showAll=true (caret/focus) lists every favourite + popular coin; only the
+      // typing path filters by what's in the box.
+      function openSymbolMenu(showAll) {
         const menu = $("g-symbol-menu"); if (!menu) return;
-        const items = symbolMenuItems($("g-symbol").value.trim());
+        const items = symbolMenuItems(showAll ? "" : $("g-symbol").value.trim());
         if (!items.length) { menu.classList.add("hidden"); return; }
         menu.innerHTML = items.map((x) => `<div class="combo-item" data-sym="${escapeHtml(x.s)}"><span>${x.fav ? "★ " : ""}${escapeHtml(x.s)}</span>${x.fav ? '<span style="color:var(--muted);font-size:0.75rem">favourite</span>' : ""}</div>`).join("");
         menu.querySelectorAll("[data-sym]").forEach((el) => (el.onclick = () => { $("g-symbol").value = el.dataset.sym; menu.classList.add("hidden"); }));
         menu.classList.remove("hidden");
       }
-      if ($("g-symbol-caret")) $("g-symbol-caret").onclick = (e) => { e.stopPropagation(); const m = $("g-symbol-menu"); m.classList.contains("hidden") ? openSymbolMenu() : m.classList.add("hidden"); };
-      if ($("g-symbol")) { $("g-symbol").addEventListener("input", openSymbolMenu); $("g-symbol").addEventListener("focus", openSymbolMenu); }
+      if ($("g-symbol-caret")) $("g-symbol-caret").onclick = (e) => { e.stopPropagation(); const m = $("g-symbol-menu"); m.classList.contains("hidden") ? openSymbolMenu(true) : m.classList.add("hidden"); };
+      if ($("g-symbol")) {
+        $("g-symbol").addEventListener("input", () => openSymbolMenu(false));
+        $("g-symbol").addEventListener("focus", () => openSymbolMenu(true));
+      }
       // Tapping a favourite loads it into the Goal form's symbol.
       function loadIntoGoal(coin) {
         $("g-symbol").value = String(coin).replace(/USDT$/, "");

@@ -49,6 +49,30 @@ func TestSharedAIFreeForApprovedCrew(t *testing.T) {
 	}
 }
 
+func TestPioneerPerkDuringClosedBeta(t *testing.T) {
+	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
+	user, _ := tk.Issue("tg:7", "pioneer", "user")
+
+	// Closed beta: an approved crew member runs as Commander (pioneer perk).
+	beta := NewServer(testConfigWith(t, nil), nil, testLogger(), WithTokenizer(tk))
+	beta.access.Approve(context.Background(), "tg:7")
+	if me := getJSON(t, beta, "/api/me", user); me["tier"] != "commander" {
+		t.Fatalf("closed-beta approved tier = %v, want commander", me["tier"])
+	}
+	// An admin-set paid tier still wins over the pioneer default.
+	beta.access.SetTier(context.Background(), "tg:7", "captain")
+	if me := getJSON(t, beta, "/api/me", user); me["tier"] != "captain" {
+		t.Fatalf("explicit captain should win, got %v", me["tier"])
+	}
+
+	// Public launch (FREE_SUB_OPEN=true): a plain approved user falls to Crew.
+	open := NewServer(testConfigWith(t, map[string]string{"FREE_SUB_OPEN": "true"}), nil, testLogger(), WithTokenizer(tk))
+	open.access.Approve(context.Background(), "tg:7")
+	if me := getJSON(t, open, "/api/me", user); me["tier"] != "free" {
+		t.Fatalf("post-launch approved tier = %v, want free (Crew)", me["tier"])
+	}
+}
+
 func TestMissionRequiresActiveKey(t *testing.T) {
 	stub := stubKlines(t)
 	cfg := testConfigWith(t, map[string]string{"MARKETDATA_BASE_URL": stub.URL, "ACCESS_OPEN": "true"})

@@ -90,8 +90,20 @@ func (s *Server) tierOfSubject(ctx context.Context, subject string) string {
 		return TierCommander
 	}
 	if s.access != nil {
-		if rec, ok, err := s.access.Get(ctx, subject); err == nil && ok && rec.Tier != "" {
-			return rec.Tier
+		if rec, ok, err := s.access.Get(ctx, subject); err == nil && ok {
+			// An explicit paid tier set by the admin always wins.
+			if rec.Tier == TierCaptain || rec.Tier == TierCommander {
+				return rec.Tier
+			}
+			// Pioneer perk: while the public free tier isn't open yet
+			// (FREE_SUB_OPEN=false), every approved crew member runs as Commander
+			// (unlimited). After it opens, they fall back to their stored tier.
+			if !s.cfg.App.FreeSubOpen && rec.Status == accessApproved {
+				return TierCommander
+			}
+			if rec.Tier != "" {
+				return rec.Tier
+			}
 		}
 	}
 	return TierFree

@@ -156,8 +156,10 @@ func (s *Server) notifyAdmin(text string) {
 	token := s.cfg.Telegram.BotToken
 	adminID := s.cfg.Telegram.AdminUserID
 	if token == "" || adminID == 0 {
+		s.logger.Warn("admin notify skipped (TELEGRAM_BOT_TOKEN / TELEGRAM_ADMIN_USER_ID not set on this process)")
 		return
 	}
+	s.logger.Info("notifying admin of crew request", "admin_id", adminID)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
