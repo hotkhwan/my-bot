@@ -267,6 +267,12 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.AI.Provider = strings.ToLower(reader.string("AI_PROVIDER", cfg.AI.Provider))
 	cfg.AI.APIKey = reader.string("AI_API_KEY", cfg.AI.APIKey)
 	cfg.AI.BaseURL = reader.string("AI_BASE_URL", cfg.AI.BaseURL)
+	// The default base URL targets OpenAI. For the Anthropic provider that is wrong
+	// (it makes requests hit api.openai.com/v1/messages → 404), so when the user
+	// picked anthropic without overriding AI_BASE_URL, point at Anthropic's API.
+	if cfg.AI.Provider == "anthropic" && cfg.AI.BaseURL == "https://api.openai.com/v1" {
+		cfg.AI.BaseURL = "https://api.anthropic.com/v1"
+	}
 	cfg.AI.Model = reader.string("AI_MODEL", cfg.AI.Model)
 	cfg.AI.SystemPrompt = reader.string("AI_SYSTEM_PROMPT", cfg.AI.SystemPrompt)
 	cfg.AI.RequestTimeout = reader.seconds("AI_REQUEST_TIMEOUT_SECONDS", cfg.AI.RequestTimeout)

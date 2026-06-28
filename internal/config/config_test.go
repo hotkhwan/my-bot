@@ -43,6 +43,32 @@ func TestLoadFromLookupUsesSafeDefaults(t *testing.T) {
 	}
 }
 
+func TestAnthropicBaseURLDefaultsToAnthropic(t *testing.T) {
+	// AI_PROVIDER=anthropic without AI_BASE_URL must NOT keep the OpenAI default
+	// (that makes requests hit api.openai.com/v1/messages → 404).
+	cfg, err := LoadFromLookup(testLookup(map[string]string{
+		"AI_PROVIDER": "anthropic", "AI_API_KEY": "sk-ant-x", "AI_MODEL": "claude-opus-4-8",
+	}))
+	if err != nil {
+		t.Fatalf("LoadFromLookup: %v", err)
+	}
+	if cfg.AI.BaseURL != "https://api.anthropic.com/v1" {
+		t.Fatalf("anthropic BaseURL = %q, want https://api.anthropic.com/v1", cfg.AI.BaseURL)
+	}
+
+	// An explicit AI_BASE_URL (e.g. a proxy) is still respected.
+	cfg2, err := LoadFromLookup(testLookup(map[string]string{
+		"AI_PROVIDER": "anthropic", "AI_API_KEY": "sk-ant-x", "AI_MODEL": "claude-opus-4-8",
+		"AI_BASE_URL": "https://proxy.example/v1",
+	}))
+	if err != nil {
+		t.Fatalf("LoadFromLookup: %v", err)
+	}
+	if cfg2.AI.BaseURL != "https://proxy.example/v1" {
+		t.Fatalf("explicit BaseURL = %q, want the proxy", cfg2.AI.BaseURL)
+	}
+}
+
 func TestLoadFromFileReadsDotEnv(t *testing.T) {
 	envPath := writeTempEnv(t, `
 APP_ENV=dev
