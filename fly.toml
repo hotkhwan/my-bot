@@ -14,9 +14,16 @@ primary_region = "sin" # Singapore: close to Binance + Thailand
 [env]
   APP_ENV = "production"
   TELEGRAM_MODE = "polling"
-  DRY_RUN = "true"
+  # DRY_RUN=false places REAL orders — but only on TESTNET while BINANCE_TESTNET=true
+  # and REAL_TRADING_ENABLED=false (the executor refuses live-account orders). This
+  # is what makes "Run live Mission" actually appear on demo.binance.com and the
+  # Live-positions feed populate. It can never touch a real-money account here.
+  DRY_RUN = "false"
   BINANCE_TESTNET = "true"
   REAL_TRADING_ENABLED = "false"
+  # Lets the autonomous /campaign engine execute — still testnet-only, gated by the
+  # two flags above at runtime.
+  CAMPAIGN_LIVE_ENABLED = "true"
   LOG_LEVEL = "info"
   MONGODB_DATABASE = "tradebot"
   HTTP_ADDR = ":8080"
