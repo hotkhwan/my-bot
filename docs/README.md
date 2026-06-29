@@ -21,3 +21,10 @@ user-facing or trading features.
 
 Two gates run before merge on user-facing/trading features: the **Security Gate**
 (`security-trading-risk-reviewer`) and the **Legal Gate** (legal doc above). See CLAUDE.md.
+
+Strategy and roadmap:
+
+- [strategy/anny-basic-v1.2.md](strategy/anny-basic-v1.2.md) - first versioned
+  ANNY strategy model and its delivery gates.
+- [plan/ANNY_ROADMAP.md](plan/ANNY_ROADMAP.md) - Mission Zero and Mission One
+  roadmap, including current model delivery status.

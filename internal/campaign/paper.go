@@ -8,6 +8,7 @@ import (
 	"bottrade/internal/backtest"
 	"bottrade/internal/decimal"
 	"bottrade/internal/marketdata"
+	"bottrade/internal/strategy/annybasic"
 )
 
 // Paper trading turns the synthetic /goal preview into a data-driven one: it
@@ -44,6 +45,9 @@ type PaperConfig struct {
 	MaxHoldBars  int     // force-close after N bars if neither level hits; default 24
 	WarmupBars   int     // bars before the first trade is allowed; default 30
 	PlanBars     int     // only allow new entries in the final N bars; 0 = all bars
+	// MainCandles supplies closed/closing 15m candles for ANNY Basic while the
+	// candles argument to RunPaper remains its 1m execution series.
+	MainCandles []marketdata.Candle
 	// Adaptive stop: the stop distance is AtrStopMult × recent ATR% (clamped to
 	// [MinStopPct, MaxStopPct]), so a 1% move on 1m and on 1d aren't treated the
 	// same — a fixed % stop is pure noise on higher timeframes and stops out before
@@ -110,6 +114,13 @@ func StrategyFor(name string) backtest.Strategy {
 // deterministic given the candles, so it is fully testable offline.
 func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error) {
 	strat := StrategyFor(cfg.Strategy)
+	strategyName := strat.Name()
+	if cfg.Strategy == annybasic.ID {
+		strategyName = annybasic.ID + "_v" + annybasic.Version
+		if len(cfg.MainCandles) == 0 {
+			return PaperResult{}, fmt.Errorf("paper: ANNY Basic requires 15m main candles")
+		}
+	}
 	if cfg.StopLossPct < 0 {
 		cfg.StopLossPct = 0 // negative is meaningless; fall through to adaptive
 	}
@@ -168,7 +179,7 @@ func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error)
 	result := PaperResult{
 		Goal:     cfg.Goal,
 		Symbol:   cfg.Symbol,
-		Strategy: strat.Name(),
+		Strategy: strategyName,
 		Bias:     cfg.Bias,
 		Bars:     len(candles),
 		State:    State{Goal: cfg.Goal},
@@ -183,13 +194,33 @@ func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error)
 	if cfg.PlanBars > 0 && len(candles)-cfg.PlanBars > i {
 		i = len(candles) - cfg.PlanBars
 	}
+	consecutiveLosses := 0
 	for i < len(candles)-1 {
 		if v := Evaluate(result.State); v != Continue {
 			result.Verdict = v
 			return finalize(result), nil
 		}
 
-		side := signalSide(strat.Evaluate(closes[:i+1]))
+		side := ""
+		if cfg.Strategy == annybasic.ID {
+			observation, observeErr := annybasic.ObserveAt(cfg.MainCandles, candles, i)
+			if observeErr != nil {
+				i++
+				continue
+			}
+			modelDecision := annybasic.Evaluate(observation, annybasic.State{
+				TradesClosed:      result.State.TradesClosed,
+				ConsecutiveLosses: consecutiveLosses,
+				RealizedPnLUSDT:   result.State.RealizedPnL,
+			}, 100)
+			if modelDecision.Stop {
+				result.Verdict = StopStrategyRule
+				return finalize(result), nil
+			}
+			side = string(modelDecision.Side)
+		} else {
+			side = signalSide(strat.Evaluate(closes[:i+1]))
+		}
 		if side == "" || !biasAllows(cfg.Bias, side) {
 			i++
 			continue
@@ -238,8 +269,10 @@ func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error)
 		win := pnl > 0
 		if win {
 			result.Wins++
+			consecutiveLosses = 0
 		} else {
 			result.Losses++
+			consecutiveLosses++
 		}
 		result.Trades = append(result.Trades, PaperTrade{
 			Index:      len(result.Trades) + 1,

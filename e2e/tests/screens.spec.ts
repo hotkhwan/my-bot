@@ -7,10 +7,8 @@ const OUT = "screens";
 
 async function login(page: Page) {
   await page.goto("/");
-  const user = "shot_" + Date.now();
-  await page.fill("#username", user);
+  await page.fill("#username", "e2e_user");
   await page.fill("#password", "password123");
-  await Promise.all([page.waitForResponse((r) => r.url().includes("/api/register")), page.click("#register")]);
   await Promise.all([page.waitForResponse((r) => r.url().includes("/api/login")), page.click("#login")]);
   await expect(page.locator("#view-home")).toBeVisible();
 }

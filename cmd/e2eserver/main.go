@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -54,6 +55,10 @@ func main() {
 	userSvc, err := users.NewService(users.NewMemoryRepository())
 	if err != nil {
 		logger.Error("users", "error", err)
+		os.Exit(1)
+	}
+	if _, err := userSvc.Register(context.Background(), "e2e_user", "password123"); err != nil {
+		logger.Error("seed e2e user", "error", err)
 		os.Exit(1)
 	}
 

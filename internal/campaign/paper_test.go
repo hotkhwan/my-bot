@@ -1,6 +1,7 @@
 package campaign
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -226,6 +227,54 @@ func TestRunPaperNeedsEnoughCandles(t *testing.T) {
 	goal, _ := ParseGoal("goal profit 5 capital 100")
 	if _, err := RunPaper(PaperConfig{Goal: goal, Symbol: "BTCUSDT"}, trendCandles(100, 0.01, 0.01, 0.01, 5)); err == nil {
 		t.Fatal("expected error for too few candles")
+	}
+}
+
+func TestRunPaperANNYBasicUsesDualTimeframes(t *testing.T) {
+	goal, _ := ParseGoal("goal profit 5 capital 100")
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	main := make([]marketdata.Candle, 180)
+	for i := range main {
+		close := 100 + 0.04*float64(i) + 4*math.Sin(float64(i)*0.24)
+		main[i] = marketdata.Candle{
+			OpenTime: base.Add(time.Duration(i) * 15 * time.Minute),
+			Open:     close - 0.1, High: close + 0.3, Low: close - 0.3,
+			Close: close, Volume: 100 + float64(i%10),
+		}
+	}
+	execStart := base.Add(130 * 15 * time.Minute)
+	exec := make([]marketdata.Candle, 300)
+	for i := range exec {
+		close := 105 + 0.01*float64(i) + math.Sin(float64(i)*0.12)
+		exec[i] = marketdata.Candle{
+			OpenTime: execStart.Add(time.Duration(i) * time.Minute),
+			Open:     close - 0.05, High: close + 0.2, Low: close - 0.2,
+			Close: close, Volume: 100 + float64(i%25),
+		}
+	}
+
+	res, err := RunPaper(PaperConfig{
+		Goal: goal, Symbol: "BTCUSDT", Strategy: "anny_basic",
+		MainCandles: main, PlanBars: 120,
+	}, exec)
+	if err != nil {
+		t.Fatalf("RunPaper(anny_basic): %v", err)
+	}
+	if res.Strategy != "anny_basic_v1.2" {
+		t.Fatalf("strategy = %q", res.Strategy)
+	}
+	if res.Bars != len(exec) {
+		t.Fatalf("bars = %d, want %d execution bars", res.Bars, len(exec))
+	}
+}
+
+func TestRunPaperANNYBasicRequiresMainCandles(t *testing.T) {
+	goal, _ := ParseGoal("goal profit 5 capital 100")
+	_, err := RunPaper(PaperConfig{
+		Goal: goal, Symbol: "BTCUSDT", Strategy: "anny_basic",
+	}, trendCandles(100, 0.01, 0.01, 0.01, 90))
+	if err == nil {
+		t.Fatal("expected missing 15m candles error")
 	}
 }
 

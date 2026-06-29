@@ -457,7 +457,7 @@
               <div><label for="g-symbol">Symbol <span class="ibadge" data-info="Symbol-specific limits are checked again before execution.">ⓘ</span></label><select id="g-symbol"><option value="BTC">BTC</option></select></div>
               <div><label for="g-duration">Plan duration <span class="ibadge" data-info="How long this plan may open positions. A smaller execution timeframe is selected automatically.">ⓘ</span></label><select id="g-duration"><option value="15m">15m · dev</option><option value="1h" selected>1h</option><option value="2h">2h</option><option value="4h">4h</option><option value="8h">8h</option><option value="12h">12h</option><option value="24h">24h</option><option value="48h">48h</option><option value="1w">1 week</option></select></div>
             </div>
-            <label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select>
+            <label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="anny_basic">ANNY Basic v1.2</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select>
             <label class="gai"><input type="checkbox" id="g-ai" checked /> Let AI pick the side (per run)</label>
             <button class="primary" id="g-run" type="button">Assess plan on real data →</button>
             <div id="g-keyhint" class="reco hidden" style="margin-top:0.5rem"></div>
@@ -1557,8 +1557,8 @@
           renderReco(strats, coins, d.total_runs || 0);
         } catch (e) { $("comm-strats").textContent = "Could not load community stats."; }
       }
-      const stratValue = { ema_cross: "ema", rsi_reversion: "rsi", macd: "macd", sma_cross: "sma", breakout: "breakout", auto: "auto" };
-      const KNOWN_STRATS = ["ema_cross", "rsi_reversion", "macd", "sma_cross", "breakout", "auto"];
+      const stratValue = { "anny_basic_v1.2": "anny_basic", ema_cross: "ema", rsi_reversion: "rsi", macd: "macd", sma_cross: "sma", breakout: "breakout", auto: "auto" };
+      const KNOWN_STRATS = ["anny_basic_v1.2", "ema_cross", "rsi_reversion", "macd", "sma_cross", "breakout", "auto"];
       // Recommend only a community-PROVEN (green) strategy/coin. When nothing is
       // green, don't push a money-loser — suggest exploring a strategy the crew
       // hasn't tested yet (or the least-bad), and leave the coin open. Still

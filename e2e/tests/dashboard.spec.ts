@@ -4,15 +4,10 @@ import { test, expect, Page } from "@playwright/test";
 // are independent against the in-memory user store.
 async function registerAndLogin(page: Page) {
   await page.goto("/");
-  const user = "e2e_" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
-  await page.fill("#username", user);
+  await page.fill("#username", "e2e_user");
   await page.fill("#password", "password123");
   // Register creates the account (no session token); Log in then issues the JWT.
   // Await each response so the login never races ahead of the register write.
-  await Promise.all([
-    page.waitForResponse((r) => r.url().includes("/api/register")),
-    page.click("#register"),
-  ]);
   await Promise.all([
     page.waitForResponse((r) => r.url().includes("/api/login")),
     page.click("#login"),
@@ -37,7 +32,7 @@ test("login → goal paper run shows real stats", async ({ page }) => {
   await page.fill("#g-risk", "30");
   await page.selectOption("#g-symbol", "BTC");
   await page.selectOption("#g-strategy", "ema");
-  await page.selectOption("#g-interval", "1h");
+  await page.selectOption("#g-duration", "1h");
   await page.click("#g-run");
 
   const card = page.locator("#g-card");
@@ -87,6 +82,7 @@ test("flight recorder logs the paper run, labeled and hashed", async ({ page }) 
   await gotoTrade(page);
   await page.fill("#g-profit", "5");
   await page.selectOption("#g-symbol", "BTC");
+  await page.selectOption("#g-strategy", "ema");
   await page.click("#g-run");
   await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
 
@@ -104,6 +100,7 @@ test("community leaderboard aggregates the run; mission replay opens", async ({ 
   await gotoTrade(page);
   await page.fill("#g-profit", "5");
   await page.selectOption("#g-symbol", "BTC");
+  await page.selectOption("#g-strategy", "ema");
   await page.click("#g-run");
   await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
 

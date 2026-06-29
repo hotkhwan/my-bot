@@ -12,6 +12,7 @@ import (
 
 	"bottrade/internal/campaign"
 	"bottrade/internal/decimal"
+	"bottrade/internal/marketdata"
 	"bottrade/internal/signals"
 
 	"github.com/gofiber/fiber/v3"
@@ -118,7 +119,7 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 	interval := spec.ExecutionInterval
 	strategy := "ema"
 	switch req.Strategy {
-	case "rsi", "macd", "sma", "breakout", "auto":
+	case "rsi", "macd", "sma", "breakout", "auto", "anny_basic":
 		strategy = req.Strategy
 	}
 	bars := spec.PlanBars + 40 // warmup + a small volatility lookback
@@ -126,6 +127,13 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 	candles, err := s.market.Candles(c.Context(), symbol, interval, bars)
 	if err != nil {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "could not load market data for " + symbol})
+	}
+	var mainCandles []marketdata.Candle
+	if strategy == "anny_basic" {
+		mainCandles, err = s.market.Candles(c.Context(), symbol, "15m", 200)
+		if err != nil {
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "could not load 15m model data for " + symbol})
+		}
 	}
 
 	bias := campaign.BiasBoth
@@ -136,7 +144,7 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 
 	result, err := campaign.RunPaper(campaign.PaperConfig{
 		Goal: goal, Symbol: symbol, Strategy: strategy, Bias: bias,
-		PlanBars: spec.PlanBars,
+		PlanBars: spec.PlanBars, MainCandles: mainCandles,
 	}, candles)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -319,6 +327,7 @@ func goalSummaryText(goal campaign.Goal, r campaign.PaperResult, aiNote string) 
 		campaign.StopTargetReached: "🎯 target reached",
 		campaign.StopMaxDrawdown:   "🛑 stopped: max drawdown",
 		campaign.StopMaxTrades:     "⏹ stopped: max trades",
+		campaign.StopStrategyRule:  "stopped: strategy risk rule",
 		campaign.Continue:          "plan window completed",
 	}[r.Verdict]
 	if verdict == "" {
