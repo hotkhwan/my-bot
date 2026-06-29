@@ -11,8 +11,10 @@ import (
 	"bottrade/internal/campaign"
 	"bottrade/internal/decimal"
 	"bottrade/internal/domain"
+	"bottrade/internal/marketdata"
 	"bottrade/internal/orders"
 	"bottrade/internal/signals"
+	"bottrade/internal/strategy/annybasic"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -118,6 +120,9 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	switch req.Strategy {
 	case "rsi", "macd", "sma", "breakout", "auto":
 		strategyName = req.Strategy
+	case annybasic.ID:
+		strategyName = annybasic.ID
+		interval = "1m"
 	}
 
 	candles, err := s.market.Candles(c.Context(), symbol, interval, 120)
@@ -130,16 +135,37 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	}
 
 	// Direction: the strategy's current signal, optionally constrained by AI.
-	side := signalSideStr(campaign.StrategyFor(strategyName).Evaluate(closes))
+	side := ""
 	reason := strategyName
+	modelLeverageCap := missionMaxLeverage
+	if strategyName == annybasic.ID {
+		decision, err := s.annyBasicLiveDecision(c.Context(), symbol, candles)
+		if err != nil {
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "could not assess ANNY Basic setup for " + symbol})
+		}
+		if decision.Stop || decision.Side == annybasic.SideNone {
+			return c.JSON(fiber.Map{"output": "🤖 No ANNY Basic setup right now — " + decision.Reason + ". Paper and live are aligned, so no testnet order is staged."})
+		}
+		side = string(decision.Side)
+		reason = annybasic.ID + " v" + annybasic.Version + " · " + decision.Reason
+		modelLeverageCap = decision.MaxLeverage
+	} else {
+		side = signalSideStr(campaign.StrategyFor(strategyName).Evaluate(closes))
+	}
 	if req.UseAI {
 		bias, note := s.aiBias(c.Context(), claimsOf(c).Subject, symbol, closes[len(closes)-1])
-		reason = strings.TrimSpace(strategyName + " · " + note)
-		switch bias {
-		case campaign.BiasLong:
-			side = "long"
-		case campaign.BiasShort:
-			side = "short"
+		reason = strings.TrimSpace(reason + " · " + note)
+		if strategyName == annybasic.ID {
+			if (bias == campaign.BiasLong && side == "short") || (bias == campaign.BiasShort && side == "long") {
+				return c.JSON(fiber.Map{"output": "🤖 No ANNY Basic setup right now — AI bias conflicts with CDC/QQE. No testnet order is staged."})
+			}
+		} else {
+			switch bias {
+			case campaign.BiasLong:
+				side = "long"
+			case campaign.BiasShort:
+				side = "short"
+			}
 		}
 	}
 	if side == "" {
@@ -149,7 +175,7 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	entry := candles[len(candles)-1].Close
 	sl, tp := missionBracket(side, entry)
 	size := missionSize(req.Capital)
-	leverage := missionLeverageFor(req.LeverageUsePct, s.cfg.App.MaxLeverage)
+	leverage := missionLeverageFor(req.LeverageUsePct, minPositive(s.cfg.App.MaxLeverage, modelLeverageCap))
 
 	decision := signals.Decision{
 		Action:     signals.ActionOpen,
@@ -182,9 +208,37 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 		"mission": fiber.Map{
 			"symbol": symbol, "side": side, "entry": trimPrice(entry),
 			"stop_loss": trimPrice(sl), "take_profit": trimPrice(tp),
-			"leverage": leverage, "duration": req.Duration,
+			"leverage": leverage, "duration": req.Duration, "size_usdt": strconv.FormatFloat(size, 'f', 2, 64),
 		},
 	})
+}
+
+func (s *Server) annyBasicLiveDecision(ctx context.Context, symbol string, executionCandles []marketdata.Candle) (annybasic.Decision, error) {
+	mainCandles, err := s.market.Candles(ctx, symbol, "15m", 200)
+	if err != nil {
+		return annybasic.Decision{}, err
+	}
+	if len(executionCandles) == 0 {
+		return annybasic.Decision{Reason: "no execution candles"}, nil
+	}
+	obs, err := annybasic.ObserveAt(mainCandles, executionCandles, len(executionCandles)-1)
+	if err != nil {
+		return annybasic.Decision{Reason: err.Error()}, nil
+	}
+	return annybasic.Evaluate(obs, annybasic.State{RealizedPnLUSDT: decimal.Zero()}, missionMaxLeverage), nil
+}
+
+func minPositive(a, b int) int {
+	switch {
+	case a <= 0:
+		return b
+	case b <= 0:
+		return a
+	case a < b:
+		return a
+	default:
+		return b
+	}
 }
 
 func (s *Server) scheduleTimedMissionClose(m timedMission) {

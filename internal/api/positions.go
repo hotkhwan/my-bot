@@ -34,14 +34,23 @@ func (s *Server) handleGetPositions(c fiber.Ctx) error {
 		if p.Amount.IsZero() {
 			continue
 		}
+		notional := p.Amount.Abs().Mul(p.MarkPrice)
+		margin := decimal.Zero()
+		if p.Leverage > 0 {
+			if value, err := notional.QuoFloor(decimal.NewFromInt(int64(p.Leverage)), 8); err == nil {
+				margin = value
+			}
+		}
 		out = append(out, fiber.Map{
-			"symbol":   p.Symbol,
-			"side":     string(p.Side),
-			"amount":   p.Amount.String(),
-			"entry":    p.EntryPrice.String(),
-			"mark":     p.MarkPrice.String(),
-			"pnl":      p.UnrealizedProfit.String(),
-			"leverage": p.Leverage,
+			"symbol":        p.Symbol,
+			"side":          string(p.Side),
+			"amount":        p.Amount.String(),
+			"entry":         p.EntryPrice.String(),
+			"mark":          p.MarkPrice.String(),
+			"pnl":           p.UnrealizedProfit.String(),
+			"leverage":      p.Leverage,
+			"notional_usdt": p.Amount.Abs().Mul(p.MarkPrice).String(),
+			"margin_usdt":   margin.String(),
 		})
 	}
 	return c.JSON(fiber.Map{"positions": out})

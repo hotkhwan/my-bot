@@ -59,6 +59,33 @@ func TestMissionPrepareAndConfirm(t *testing.T) {
 	}
 }
 
+func TestMissionPrepareANNYBasicDoesNotFallbackToEMA(t *testing.T) {
+	stub := stubKlines(t)
+	cfg := testConfigWith(t, map[string]string{"MARKETDATA_BASE_URL": stub.URL, "ACCESS_OPEN": "true"})
+	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
+	token, _ := tk.Issue("tg:468848033", "u", "user")
+	orderSvc := orders.NewService(true, time.Minute, testLogger())
+	server := NewServer(cfg, nil, testLogger(), WithTokenizer(tk), WithOrders(orderSvc))
+
+	body, _ := json.Marshal(map[string]any{
+		"symbol": "BTC", "capital": 100, "strategy": "anny_basic", "duration": "15m", "leverage_use_pct": 50,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/mission/prepare", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, _ := server.App().Test(req)
+	defer resp.Body.Close()
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+
+	if out["confirm_id"] != nil {
+		t.Fatalf("ANNY Basic without setup should not stage an EMA fallback order: %v", out)
+	}
+	if output, _ := out["output"].(string); !strings.Contains(output, "No ANNY Basic setup") {
+		t.Fatalf("output = %q, want no-setup explanation", output)
+	}
+}
+
 func TestMissionGated(t *testing.T) {
 	stub := stubKlines(t)
 	// ACCESS_OPEN=false → non-admin must be approved first.

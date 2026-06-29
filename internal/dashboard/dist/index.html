@@ -292,6 +292,14 @@
       .position-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.65rem; margin:.65rem 0; }
       .position-grid .pk { color:var(--muted); font-size:.68rem; }
       .position-grid .pv { font:600 .84rem var(--font-mono); margin-top:.12rem; }
+      .live-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:.45rem; margin:.65rem 0; }
+      .live-cell { border:1px solid var(--card-border); border-radius:.55rem; padding:.5rem; background:rgba(255,255,255,.035); min-width:0; }
+      .live-cell .lk { color:var(--muted); font-size:.66rem; }
+      .live-cell .lv { font:700 .86rem var(--font-mono); margin-top:.1rem; overflow-wrap:anywhere; }
+      .live-ledger { margin-top:.55rem; border-top:1px solid #ffffff10; }
+      .live-row { display:grid; grid-template-columns:2.2rem 1fr auto; gap:.45rem; align-items:center; padding:.5rem 0; border-bottom:1px solid #ffffff10; font-size:.78rem; }
+      .live-row:last-child { border-bottom:0; }
+      .live-row .lrmeta { color:var(--muted); font-size:.7rem; margin-top:.08rem; }
       #view-login { max-width: 34rem; margin: 2.2rem auto 0; }
       .login-intro { text-align: center; margin: 0.7rem auto 1.15rem; max-width: 29rem; line-height: 1.55; }
       .login-card { padding: 1.35rem; }
@@ -500,7 +508,9 @@
             <button class="ghost" id="g-confirm-no">Cancel</button>
           </div>
           <div class="flow-step" style="margin-top:1rem"><span class="flow-no">4</span><strong>Live monitor <span style="color:var(--muted);font-weight:400;font-size:0.8rem">· testnet</span></strong></div>
+          <div id="live-summary" class="live-summary hidden"></div>
           <div id="positions">No open position.</div>
+          <div id="live-ledger"></div>
           <details id="mission-activity-wrap" style="margin-top:.8rem"><summary style="cursor:pointer;color:var(--muted);font-size:.8rem">Mission activity</summary><pre id="mission-activity" class="output hidden"></pre></details>
         </div>
 
@@ -1439,6 +1449,66 @@
           }).join("");
           box.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => closePosition(b.dataset.close)));
         } catch (e) { box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">Could not load positions.</p>'; }
+      }
+      async function loadPositions() {
+        const box = $("positions"); if (!box) return;
+        try {
+          const [posRes, recRes] = await Promise.all([
+            fetch("/api/positions", { headers: authHeaders() }),
+            fetch("/api/recorder", { headers: authHeaders() }),
+          ]);
+          const d = await posRes.json();
+          const recorder = recRes.ok ? await recRes.json().catch(() => ({})) : {};
+          const ps = d.positions || [];
+          const closed = (recorder.entries || []).filter((e) => e.kind === "trade").slice(0, 10);
+          renderLiveLedger(ps, closed);
+          if (!ps.length) {
+            box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No open position. Configure and assess a new plan above.</p>';
+            if (activeMission) { activeMission = null; localStorage.removeItem("activeMission"); }
+            return;
+          }
+          box.innerHTML = ps.map(renderOpenPosition).join("");
+          box.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => closePosition(b.dataset.close)));
+        } catch (e) { box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">Could not load positions.</p>'; }
+      }
+      function renderOpenPosition(p) {
+        const pnl = Number(p.pnl) || 0, up = pnl >= 0, sideCls = p.side === "long" ? "up" : "down";
+        const lev = Number(p.leverage) > 0 ? " " + p.leverage + "x" : "";
+        const meta = activeMission && activeMission.symbol === p.symbol ? activeMission : {};
+        const remain = meta.deadline ? Math.max(0, meta.deadline - Date.now()) : 0;
+        const remainText = meta.deadline ? Math.ceil(remain / 60000) + "m left" : "manual";
+        const tp = meta.take_profit ? formatPrice(meta.take_profit) : "—";
+        const sl = meta.stop_loss ? formatPrice(meta.stop_loss) : "—";
+        const leverage = p.leverage || meta.leverage || "—";
+        return `<div class="position-card"><div><b>${escapeHtml(p.symbol)}</b> <span class="${sideCls}">${escapeHtml(p.side)}</span>${lev}<span class="badge" style="float:right">${escapeHtml(remainText)}</span></div><div class="position-grid"><div><div class="pk">Entry</div><div class="pv">${formatPrice(p.entry)}</div></div><div><div class="pk">Mark</div><div class="pv">${formatPrice(p.mark)}</div></div><div><div class="pk">PnL</div><div class="pv ${up ? "up" : "down"}">${fmtPnl(pnl)} USDT</div></div><div><div class="pk">Opened</div><div class="pv">${fmtPnl(p.notional_usdt)} USDT</div></div><div><div class="pk">Margin</div><div class="pv">${fmtPnl(p.margin_usdt)} USDT</div></div><div><div class="pk">Leverage</div><div class="pv">${escapeHtml(leverage)}x</div></div><div><div class="pk">Take profit</div><div class="pv">${tp}</div></div><div><div class="pk">Stop loss</div><div class="pv">${sl}</div></div><div><div class="pk">Qty</div><div class="pv">${escapeHtml(p.amount || "—")}</div></div></div><button class="ghost" data-close="${escapeHtml(p.symbol)}" style="width:100%">Close position</button></div>`;
+      }
+      function renderLiveLedger(openPositions, closedTrades) {
+        const summary = $("live-summary"), ledger = $("live-ledger");
+        if (!summary || !ledger) return;
+        const openPnl = openPositions.reduce((s, p) => s + (Number(p.pnl) || 0), 0);
+        const openNotional = openPositions.reduce((s, p) => s + (Number(p.notional_usdt) || 0), 0);
+        const closedPnl = closedTrades.reduce((s, e) => s + (Number(e.pnl) || 0), 0);
+        const wins = closedTrades.filter((e) => Number(e.pnl) > 0).length;
+        const losses = closedTrades.filter((e) => Number(e.pnl) < 0).length;
+        const decisive = wins + losses;
+        const wr = decisive ? Math.round((wins / decisive) * 100) : 0;
+        summary.innerHTML = [
+          ["Open", String(openPositions.length)],
+          ["Opened", fmtPnl(openNotional) + " USDT"],
+          ["Closed", String(closedTrades.length)],
+          ["Total PnL", fmtPnl(openPnl + closedPnl) + " USDT"],
+        ].map(([k, v]) => `<div class="live-cell"><div class="lk">${k}</div><div class="lv ${String(v).includes("-") ? "down" : ""}">${escapeHtml(v)}</div></div>`).join("");
+        summary.classList.remove("hidden");
+        const rows = [];
+        openPositions.forEach((p, i) => {
+          const pnl = Number(p.pnl) || 0;
+          rows.push(`<div class="live-row"><b>#${i + 1}</b><div><b>${escapeHtml(p.symbol)}</b> <span class="${p.side === "long" ? "up" : "down"}">${escapeHtml(p.side)}</span><div class="lrmeta">open · ${fmtPnl(p.notional_usdt)} USDT · margin ${fmtPnl(p.margin_usdt)} USDT</div></div><b class="${pnl >= 0 ? "up" : "down"}">${fmtPnl(pnl)}</b></div>`);
+        });
+        closedTrades.forEach((e, i) => {
+          const pnl = Number(e.pnl) || 0;
+          rows.push(`<div class="live-row"><b>#${openPositions.length + i + 1}</b><div><b>${escapeHtml(e.symbol)}</b> <span class="${e.side === "long" ? "up" : "down"}">${escapeHtml(e.side || "")}</span><div class="lrmeta">closed · ${escapeHtml(e.label || "trade")} · WR ${wr}% (${wins}/${losses})</div></div><b class="${pnl >= 0 ? "up" : "down"}">${fmtPnl(pnl)}</b></div>`);
+        });
+        ledger.innerHTML = rows.length ? `<div class="live-ledger">${rows.join("")}</div>` : "";
       }
       // Realtime-ish: re-poll positions every 8s while the Mission tab is open.
       let positionsTimer = null;
