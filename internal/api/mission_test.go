@@ -37,7 +37,7 @@ func TestMissionPrepareAndConfirm(t *testing.T) {
 
 	// Prepare a live mission — staged, not yet placed.
 	code, out := post("/api/mission/prepare", token, map[string]any{
-		"symbol": "BTC", "capital": 100, "strategy": "ema", "interval": "1h",
+		"symbol": "BTC", "capital": 100, "strategy": "ema", "duration": "15m", "leverage_use_pct": 50,
 	})
 	if code != http.StatusOK {
 		t.Fatalf("prepare status = %d (%v)", code, out)
@@ -45,6 +45,11 @@ func TestMissionPrepareAndConfirm(t *testing.T) {
 	cid, _ := out["confirm_id"].(string)
 	if cid == "" || !strings.Contains(out["output"].(string), "Review this live Mission") {
 		t.Fatalf("prepare = %v, want a confirm_id and review text", out)
+	}
+	mission, _ := out["mission"].(map[string]any)
+	if mission["duration"] != "15m" || mission["leverage"] != float64(10) ||
+		mission["stop_loss"] == nil || mission["take_profit"] == nil {
+		t.Fatalf("mission metadata = %v, want duration/leverage/SL/TP", mission)
 	}
 
 	// Confirm executes (dry-run, so it reports a DRY-RUN result — nothing real).
@@ -100,13 +105,24 @@ func TestMissionGated(t *testing.T) {
 	}
 }
 
-func TestMissionLeverageFromRisk(t *testing.T) {
-	cases := []struct{ risk, want int }{
-		{30, 30}, {100, 100}, {0, 3}, {-5, 3}, {250, 100}, {1, 1},
+func TestMissionLeverageFromUsePercent(t *testing.T) {
+	cases := []struct{ use, max, want int }{
+		{25, 20, 5}, {100, 20, 20}, {0, 20, 5}, {-5, 20, 5},
+		{250, 20, 20}, {1, 20, 1}, {50, 50, 25},
 	}
 	for _, c := range cases {
-		if got := missionLeverageFor(c.risk); got != c.want {
-			t.Errorf("missionLeverageFor(%d) = %d, want %d", c.risk, got, c.want)
+		if got := missionLeverageFor(c.use, c.max); got != c.want {
+			t.Errorf("missionLeverageFor(%d, %d) = %d, want %d", c.use, c.max, got, c.want)
+		}
+	}
+}
+
+func TestPlanDuration(t *testing.T) {
+	for raw, want := range map[string]time.Duration{
+		"15m": 15 * time.Minute, "1h": time.Hour, "48h": 48 * time.Hour, "1w": 7 * 24 * time.Hour,
+	} {
+		if got := planDuration(raw); got != want {
+			t.Errorf("planDuration(%q) = %s, want %s", raw, got, want)
 		}
 	}
 }

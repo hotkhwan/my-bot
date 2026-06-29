@@ -91,7 +91,8 @@ func TestGoalRunRealPaper(t *testing.T) {
 
 	// Happy path: uptrend → all wins → target reached.
 	code, out := postGoal(t, server, token, map[string]any{
-		"profit": 5, "capital": 100, "risk": 30, "symbol": "BTC", "strategy": "ema", "interval": "1h", "bars": 90,
+		"profit": 5, "capital": 100, "capital_risk_pct": 30, "leverage_use_pct": 25,
+		"symbol": "BTC", "strategy": "ema", "duration": "1h",
 	})
 	if code != http.StatusOK {
 		t.Fatalf("goal run status = %d (%v)", code, out)
@@ -108,6 +109,12 @@ func TestGoalRunRealPaper(t *testing.T) {
 	}
 	if wr, _ := stats["win_rate_pct"].(float64); wr != 100 {
 		t.Fatalf("win rate = %v, want 100", wr)
+	}
+	if stats["duration"] != "1h" || stats["interval"] != "1m" {
+		t.Fatalf("plan/execution timeframe = %v/%v, want 1h/1m", stats["duration"], stats["interval"])
+	}
+	if stats["leverage_use_pct"] != float64(25) {
+		t.Fatalf("leverage use = %v, want 25", stats["leverage_use_pct"])
 	}
 	if out["output"] == nil || !strings.Contains(out["output"].(string), "Paper run on real") {
 		t.Fatalf("missing paper-run summary text: %v", out["output"])
@@ -137,5 +144,24 @@ func TestGoalHistoryRequiresAuth(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("history no-auth status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestPlanDurationExecutionIntervals(t *testing.T) {
+	want := map[string]durationSpec{
+		"15m": {ExecutionInterval: "1m", PlanBars: 15},
+		"1h":  {ExecutionInterval: "1m", PlanBars: 60},
+		"2h":  {ExecutionInterval: "1m", PlanBars: 120},
+		"4h":  {ExecutionInterval: "5m", PlanBars: 48},
+		"8h":  {ExecutionInterval: "5m", PlanBars: 96},
+		"12h": {ExecutionInterval: "5m", PlanBars: 144},
+		"24h": {ExecutionInterval: "15m", PlanBars: 96},
+		"48h": {ExecutionInterval: "15m", PlanBars: 192},
+		"1w":  {ExecutionInterval: "1h", PlanBars: 168},
+	}
+	for duration, expected := range want {
+		if got := allowedDurations[duration]; got != expected {
+			t.Errorf("%s spec = %+v, want %+v", duration, got, expected)
+		}
 	}
 }

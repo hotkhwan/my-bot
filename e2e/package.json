@@ -3,6 +3,7 @@
   "private": true,
   "description": "Playwright end-to-end tests for the Aliza trading dashboard",
   "scripts": {
+    "check": "node check-dashboard.js",
     "test": "playwright test",
     "install:browser": "playwright install chromium"
   },

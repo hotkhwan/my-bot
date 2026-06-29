@@ -78,6 +78,7 @@ const (
 	StopTargetReached Verdict = "target_reached"
 	StopMaxDrawdown   Verdict = "max_drawdown"
 	StopMaxTrades     Verdict = "max_trades"
+	StopStrategyRule  Verdict = "strategy_rule"
 )
 
 // State is the live progress of a campaign.

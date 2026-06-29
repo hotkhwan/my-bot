@@ -135,6 +135,7 @@ Use explicit repositories in `internal/storage/mongo`. Collection names are plur
 | Collection | Purpose | Required indexes |
 |---|---|---|
 | `users` | Telegram users, role, status, and subscription metadata | unique `{telegram_user_id: 1}`, `{role: 1, status: 1}` |
+| `interest_signups` | Product-interest emails; these are not user accounts | unique `{email: 1}` |
 | `subscriptions` | Stripe customer/subscription state per user | unique `{stripe_customer_id: 1}`, unique `{stripe_subscription_id: 1}`, `{user_id: 1, status: 1}` |
 | `exchange_credentials` | encrypted per-user Binance API credentials | unique `{user_id: 1, exchange: 1}`, `{status: 1, updated_at: -1}` |
 | `audit_events` | user input, parser decisions, confirmations, exchange requests/responses | `{user_id: 1, created_at: -1}`, `{correlation_id: 1}` |
@@ -201,6 +202,21 @@ Rate limit and retry rules:
 - Binance retry is allowed only for safe reads and clearly idempotent writes.
 - Track Binance rate-limit/weight response headers where the client exposes them.
 - MongoDB connection should be established at startup and health-checked; transient write failures should fail the current action safely instead of silently losing audit data.
+
+Entry execution is maker-first: submit a post-only `LIMIT` (`GTX`) at the planned
+entry, wait for a short bounded window, cancel any remainder, then use `MARKET`
+only for the unfilled quantity. Protective SL/TP and urgent closes remain taker
+orders because avoiding an unprotected position takes priority over fee savings.
+
+Planning contract:
+
+- `capital_risk_pct` is the cumulative plan-loss ceiling as a percentage of
+  allocated capital. It is never reused as leverage.
+- `leverage_use_pct` is the percentage of the permitted leverage ceiling made
+  available to the model; execution may choose less.
+- `duration` is the plan's entry window, distinct from its automatically chosen
+  execution candle interval. Supported durations are dev `15m`, `1h`, `2h`,
+  `4h`, `8h`, `12h`, `24h`, `48h`, and `1w`.
 
 ## Logging And Sensitive Data Policy
 

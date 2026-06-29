@@ -110,12 +110,12 @@
       .row:last-child { border-bottom: 0; }
       .row strong { font-family: var(--font-mono); font-weight: 600; }
       label { display: block; font-size: 0.82rem; margin: 0.6rem 0 0.25rem; color: var(--muted); }
-      input, select {
+      input, select, textarea {
         width: 100%; padding: 0.55rem 0.65rem; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 0.6rem;
         background: rgba(5, 8, 22, 0.55); color: var(--text); font-family: var(--font-body); font-size: 0.95rem;
         transition: border-color 0.18s, box-shadow 0.18s;
       }
-      input:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.16); }
+      input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.16); }
       input[inputmode="decimal"], input[inputmode="numeric"], #t-sym, #g-symbol, #cmd, #coinSearch { font-family: var(--font-mono); }
       .actions { display: flex; gap: 0.5rem; margin-top: 0.9rem; }
       button { padding: 0.6rem; border: 0; border-radius: 0.65rem; cursor: pointer; font-weight: 700; font-family: var(--font-body); color: var(--text); }
@@ -285,6 +285,32 @@
       .fhash { font-family: var(--font-mono); font-size: 0.6rem; color: var(--muted); padding-bottom: 0.5rem; border-bottom: 1px solid #ffffff14; }
       .fhash:last-child { border-bottom: 0; }
       .hidden { display: none; }
+      .flow-step { display:flex; align-items:center; gap:0.55rem; margin-bottom:0.35rem; }
+      .flow-no { display:inline-flex; align-items:center; justify-content:center; width:1.55rem; height:1.55rem; border-radius:50%; background:rgba(0,245,255,.12); border:1px solid var(--card-border); color:var(--primary); font:700 .75rem var(--font-mono); }
+      .mission-actions { display:flex; gap:.55rem; margin-top:.8rem; }
+      .position-card { border:1px solid var(--card-border); border-radius:.8rem; padding:.8rem; margin-top:.65rem; background:rgba(5,8,22,.45); }
+      .position-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.65rem; margin:.65rem 0; }
+      .position-grid .pk { color:var(--muted); font-size:.68rem; }
+      .position-grid .pv { font:600 .84rem var(--font-mono); margin-top:.12rem; }
+      #view-login { max-width: 34rem; margin: 2.2rem auto 0; }
+      .login-intro { text-align: center; margin: 0.7rem auto 1.15rem; max-width: 29rem; line-height: 1.55; }
+      .login-card { padding: 1.35rem; }
+      .login-block { text-align: center; }
+      .login-block p { margin: 0.35rem 0 0.85rem; }
+      #pwForm { text-align: left; }
+      .login-divider { display: flex; align-items: center; gap: 0.75rem; margin: 1.2rem 0; color: var(--muted); font-size: 0.75rem; }
+      .login-divider::before, .login-divider::after { content: ""; height: 1px; flex: 1; background: rgba(148, 163, 184, 0.16); }
+      .login-submit { width: min(100%, 18rem); min-height: 2.75rem; margin: 0.95rem auto 0; display: block; }
+      .interest-box { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(148, 163, 184, 0.14); }
+      .interest-box strong { display: block; text-align: center; }
+      .interest-box p { text-align: center; margin: 0.35rem 0 0.75rem; font-size: 0.84rem; line-height: 1.5; }
+      .interest-row { display: grid; grid-template-columns: 1fr auto; gap: 0.55rem; align-items: stretch; }
+      .interest-row button { min-width: 8rem; }
+      @media (max-width: 30rem) {
+        #view-login { margin-top: 1rem; }
+        .interest-row { grid-template-columns: 1fr; }
+        .interest-row button { width: 100%; }
+      }
     </style>
   </head>
   <body>
@@ -372,35 +398,51 @@
 
       <!-- LOGIN -->
       <section id="view-login">
-        <p>Trade Binance Futures from one place. Telegram is the backend.</p>
-        <div class="card">
-          <div id="tgLogin" class="hidden">
+        <p class="login-intro">Plan entries and exits with clear risk context. Connect with Telegram or log in to your existing account.</p>
+        <div class="card login-card">
+          <div id="tgLogin" class="hidden login-block">
             <strong>Log in with Telegram</strong>
-            <p style="margin:0.3rem 0 0.6rem">One click — same account as the bot.</p>
+            <p>Use the same account as the ANNY bot.</p>
             <div id="tgWidget"></div>
             <div class="msg" id="tgMsg"></div>
-            <details style="margin-top:0.6rem"><summary style="cursor:pointer;color:var(--muted);font-size:0.85rem">Or use a username &amp; password</summary><div id="pwBox"></div></details>
+            <div class="login-divider">or use your existing account</div>
+            <div id="pwBox"></div>
           </div>
           <div id="pwForm">
-            <strong>Register / Log in</strong>
+            <strong>Log in</strong>
             <label for="username">Username</label>
-            <input id="username" autocomplete="username" />
-            <label for="password">Password (min 8 chars)</label>
+            <input id="username" autocomplete="username" placeholder="Your username" />
+            <label for="password">Password</label>
             <input id="password" type="password" autocomplete="current-password" />
-            <div class="actions">
-              <button class="primary" id="register">Register</button>
-              <button class="ghost" id="login">Log in</button>
-            </div>
+            <button class="primary login-submit" id="login" type="button">Log in</button>
             <div class="msg" id="msg"></div>
           </div>
+          <div id="invite-form" class="hidden">
+            <strong>Create your invited account</strong>
+            <p style="margin:0.35rem 0 0.75rem">After signup, your member access will wait for admin approval.</p>
+            <label for="invite-username">Username</label><input id="invite-username" autocomplete="username" />
+            <label for="invite-password">Password</label><input id="invite-password" type="password" autocomplete="new-password" />
+            <button class="primary login-submit" id="invite-register" type="button">Create account</button>
+            <div class="msg" id="invite-msg"></div>
+          </div>
+          <form class="interest-box" id="interest-form">
+            <strong>Interested in early access?</strong>
+            <p>Leave your email. We’ll only use it for ANNY access and product updates.</p>
+            <div class="interest-row">
+              <input id="interest-email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" required />
+              <button class="ghost" id="interest-submit" type="submit">Keep me posted</button>
+            </div>
+            <textarea id="interest-reason" rows="3" maxlength="1000" placeholder="Optional: What interests you about ANNY?" style="margin-top:0.55rem;resize:vertical"></textarea>
+            <div class="msg" id="interest-msg" role="status" aria-live="polite"></div>
+          </form>
         </div>
       </section>
 
       <!-- ORDERS (Trade) -->
       <section id="view-orders" class="hidden">
         <div class="card">
-          <strong>Goal — paper test on real data</strong>
-          <p style="margin:0.3rem 0 0.6rem">Set a profit goal; it runs your strategy over real Binance candles and shows the real stats. No orders are placed.</p>
+          <div class="flow-step"><span class="flow-no">1</span><strong>Configure entry / exit plan</strong></div>
+          <p style="margin:0.3rem 0 0.6rem">Explore an entry/exit plan over historical Binance candles. Results estimate maker-first entries and taker exits; no orders are placed.</p>
           <div id="g-reco" class="reco hidden"></div>
           <div class="ticket">
             <div class="grid2">
@@ -408,25 +450,21 @@
               <div><label for="g-capital">Capital (USDT)</label><input id="g-capital" inputmode="decimal" placeholder="100" value="100" autocomplete="off" /></div>
             </div>
             <div class="grid2">
-              <div><label for="g-risk">Max risk %<span class="ibadge" data-info="Max risk % is also your live-trade leverage: 5 = 5x. Lower is safer — it caps how much of your capital a single trade can lose.">ⓘ</span></label><input id="g-risk" inputmode="numeric" placeholder="5" value="5" autocomplete="off" /></div>
-              <div><label for="g-symbol">Symbol<span class="ibadge" data-info="Pick from your symbols. To add a coin, search & ★ it in the Coins panel below.">ⓘ</span></label><select id="g-symbol"><option value="BTC">BTC</option></select></div>
+              <div><label for="g-risk">Capital risk % <span class="ibadge" data-info="Maximum cumulative loss allowed for this plan, as a percentage of capital. It does not set leverage.">ⓘ</span></label><input id="g-risk" inputmode="numeric" min="1" max="100" placeholder="5" value="5" autocomplete="off" /></div>
+              <div><label for="g-leverage">Leverage use % <span class="ibadge" data-info="Percentage of the permitted leverage ceiling available to the model. Risk checks may choose less.">ⓘ</span></label><input id="g-leverage" inputmode="numeric" min="1" max="100" placeholder="25" value="25" autocomplete="off" /></div>
             </div>
             <div class="grid2">
-              <div><label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select></div>
-              <div><label for="g-interval">Timeframe</label><select id="g-interval"><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option></select></div>
+              <div><label for="g-symbol">Symbol <span class="ibadge" data-info="Symbol-specific limits are checked again before execution.">ⓘ</span></label><select id="g-symbol"><option value="BTC">BTC</option></select></div>
+              <div><label for="g-duration">Plan duration <span class="ibadge" data-info="How long this plan may open positions. A smaller execution timeframe is selected automatically.">ⓘ</span></label><select id="g-duration"><option value="15m">15m · dev</option><option value="1h" selected>1h</option><option value="2h">2h</option><option value="4h">4h</option><option value="8h">8h</option><option value="12h">12h</option><option value="24h">24h</option><option value="48h">48h</option><option value="1w">1 week</option></select></div>
             </div>
+            <label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="anny_basic">ANNY Basic v1.2</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select>
             <label class="gai"><input type="checkbox" id="g-ai" checked /> Let AI pick the side (per run)</label>
-            <button class="primary" id="g-run" type="button">Run goal (paper)</button>
-            <button class="ghost" id="g-live" type="button" style="border:1px solid var(--card-border)">🚀 Run live Mission (testnet) — places a real order on your active key, after Confirm</button>
+            <button class="primary" id="g-run" type="button">Assess plan on real data →</button>
             <div id="g-keyhint" class="reco hidden" style="margin-top:0.5rem"></div>
             <div class="msg" id="g-msg"></div>
-            <pre id="g-confirm-out" class="output hidden" style="margin-top:0.6rem"></pre>
-            <div id="g-confirm-actions" class="actions hidden">
-              <button class="primary" id="g-confirm-yes">Confirm — place order</button>
-              <button class="ghost" id="g-confirm-no">Cancel</button>
-            </div>
           </div>
           <div id="g-card" class="bcard hidden">
+            <div class="flow-step"><span class="flow-no">2</span><strong>Review paper assessment</strong></div>
             <div class="bcard-top">
               <div>
                 <div class="bcard-sym" id="bc-sym">—</div>
@@ -436,7 +474,7 @@
             </div>
             <div class="bcard-mid">
               <div>
-                <div class="bcard-lbl">PnL (USDT)</div>
+                <div class="bcard-lbl">Estimated net PnL (USDT)</div>
                 <div class="bcard-num mono" id="bc-pnl">+0.00</div>
                 <div class="bcard-roi mono" id="bc-roi"></div>
               </div>
@@ -444,9 +482,26 @@
             </div>
             <div class="bcard-grid" id="bc-stats"></div>
             <div class="bcard-foot" id="bc-verdict"></div>
+            <div id="g-review-actions" class="mission-actions hidden">
+              <button class="primary" id="g-live" type="button">Launch testnet mission →</button>
+              <button class="ghost" id="g-edit" type="button">Edit plan</button>
+            </div>
           </div>
           <details id="g-tradeswrap" class="hidden" style="margin-top:0.7rem"><summary style="cursor:pointer;color:var(--muted);font-size:0.85rem">Trades</summary><div id="g-trades"></div></details>
           <div id="g-history" style="margin-top:0.9rem"></div>
+        </div>
+
+        <div class="card" id="live-card">
+          <div class="flow-step"><span class="flow-no">3</span><strong>Launch &amp; confirm</strong></div>
+          <p style="margin:0.3rem 0">Review the proposed testnet order. Nothing is placed until you confirm.</p>
+          <pre id="g-confirm-out" class="output hidden"></pre>
+          <div id="g-confirm-actions" class="actions hidden">
+            <button class="primary" id="g-confirm-yes">Confirm mission</button>
+            <button class="ghost" id="g-confirm-no">Cancel</button>
+          </div>
+          <div class="flow-step" style="margin-top:1rem"><span class="flow-no">4</span><strong>Live monitor <span style="color:var(--muted);font-weight:400;font-size:0.8rem">· testnet</span></strong></div>
+          <div id="positions">No open position.</div>
+          <details id="mission-activity-wrap" style="margin-top:.8rem"><summary style="cursor:pointer;color:var(--muted);font-size:.8rem">Mission activity</summary><pre id="mission-activity" class="output hidden"></pre></details>
         </div>
 
         <div class="card">
@@ -478,10 +533,6 @@
           <div id="favs" style="margin-top:0.3rem"></div>
         </div>
 
-        <div class="card">
-          <strong>Live positions <span style="color:var(--muted);font-weight:400;font-size:0.8rem">· testnet · live</span></strong>
-          <div id="positions">Loading…</div>
-        </div>
       </section>
 
       <!-- HISTORY -->
@@ -546,6 +597,9 @@
           <strong>🛡 Members</strong>
           <p style="margin:0.3rem 0 0.6rem">Everyone who signed in — approve, promote, or revoke. Copy a <b>tg:id</b> below for the manual forms.</p>
           <div id="admin-approvals">Loading…</div>
+          <strong style="display:block;margin-top:1rem">Early-access interests</strong>
+          <p style="margin:0.3rem 0 0.6rem">Approve an interest to send a signup link. New accounts still wait in Members for final approval.</p>
+          <div id="admin-interests">Loading…</div>
           <label for="tier-subject" style="margin-top:0.7rem">Set a member's tier</label>
           <div class="cmdrow">
             <input id="tier-subject" placeholder="subject (e.g. tg:468848033)" autocomplete="off" />
@@ -683,7 +737,7 @@
         const ok = unlocked();
         document.querySelectorAll("#nav button").forEach((b) => { if (b.dataset.view !== "home") b.classList.toggle("hidden", !ok); });
         $("admin-card").classList.toggle("hidden", !(me && me.admin));
-        if (me && me.admin) loadAdminPending();
+        if (me && me.admin) { loadAdminPending(); loadAdminInterests(); }
         const btn = $("home-start");
         if (ok) { btn.textContent = "Start Trading →"; btn.disabled = false; btn.onclick = () => navigate("orders"); }
         else if (me && me.status === "requested") { btn.textContent = "⏳ Access requested"; btn.disabled = true; btn.onclick = null; }
@@ -723,6 +777,34 @@
       async function adminAction(path, body) {
         await fetch(path, { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
         loadAdminPending();
+      }
+      async function loadAdminInterests() {
+        const box = $("admin-interests"); if (!box) return;
+        try {
+          const d = await (await fetch("/api/admin/interests", { headers: authHeaders() })).json();
+          const list = d.interests || [];
+          box.innerHTML = list.length ? list.map((r) => {
+            const active = r.status !== "registered" && r.status !== "waitlisted";
+            const actions = active ? `<div class="member-acts"><button class="primary mini" data-invite="${escapeHtml(r.email)}">Send invite</button><button class="ghost mini" data-waitlist="${escapeHtml(r.email)}">Close &amp; waitlist</button></div>` : "";
+            return `<div class="member"><div><b>${escapeHtml(r.email)}</b><br><span style="color:var(--muted);font-size:0.76rem">${escapeHtml(r.reason || "No reason provided")} · <span class="badge ${r.status === "waitlisted" ? "live" : ""}">${escapeHtml(r.status || "new")}</span></span></div>${actions}</div>`;
+          }).join("") : "<p style='font-size:0.85rem;color:var(--muted)'>No interests yet.</p>";
+          box.querySelectorAll("[data-invite]").forEach((b) => b.onclick = async () => {
+            b.disabled = true;
+            const r = await fetch("/api/admin/interests/invite", { method:"POST", headers:authHeaders(), body:JSON.stringify({email:b.dataset.invite}) });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok || !out.sent) showToast(out.error || ("Email is not configured. Copy link: " + (out.invite_url || "")));
+            else showToast("Invitation sent.");
+            loadAdminInterests();
+          });
+          box.querySelectorAll("[data-waitlist]").forEach((b) => b.onclick = async () => {
+            if (!confirm("Close early access and send the waitlist reply to " + b.dataset.waitlist + "?")) return;
+            b.disabled = true;
+            const r = await fetch("/api/admin/interests/waitlist", { method:"POST", headers:authHeaders(), body:JSON.stringify({email:b.dataset.waitlist}) });
+            const out = await r.json().catch(() => ({}));
+            showToast(r.ok ? "Reply sent and interest moved to waitlist." : (out.error || "Could not update waitlist."));
+            loadAdminInterests();
+          });
+        } catch (_) { box.textContent = "Could not load interests."; }
       }
       function renderVersion() {
         const box = $("brand-ver"); if (!box) return;
@@ -916,8 +998,49 @@
           else show(d.error || `Failed (${r.status})`, false);
         } catch (e) { show("Network error", false); }
       }
-      $("register").onclick = () => submit("/api/register");
       $("login").onclick = () => submit("/api/login");
+      $("password").addEventListener("keydown", (e) => { if (e.key === "Enter") $("login").click(); });
+
+      $("interest-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const button = $("interest-submit"), msg = $("interest-msg");
+        button.disabled = true;
+        msg.textContent = "Saving…";
+        msg.style.color = "var(--muted)";
+        try {
+          const r = await fetch("/api/interest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: $("interest-email").value, reason: $("interest-reason").value, source: "login" }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.error || "Could not save your email");
+          $("interest-email").value = "";
+          $("interest-reason").value = "";
+          msg.textContent = "You’re on the list. We’ll keep you posted.";
+          msg.style.color = "var(--profit)";
+        } catch (err) {
+          msg.textContent = err.message || "Network error";
+          msg.style.color = "var(--loss)";
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      const inviteToken = new URLSearchParams(location.search).get("invite") || "";
+      if (inviteToken) {
+        $("pwForm").classList.add("hidden");
+        $("tgLogin").classList.add("hidden");
+        $("interest-form").classList.add("hidden");
+        $("invite-form").classList.remove("hidden");
+      }
+      $("invite-register").onclick = async () => {
+        const msg = $("invite-msg");
+        const r = await fetch("/api/invite-register", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:inviteToken, username:$("invite-username").value, password:$("invite-password").value}) });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.token) { localStorage.setItem("token", d.token); history.replaceState({}, "", "/home"); onAuthed({name:d.username}); }
+        else { msg.textContent = d.error || "Could not create account"; msg.style.color = "var(--loss)"; }
+      };
 
       // ---- auth: Telegram widget ----
       window.onTelegramAuth = async (user) => {
@@ -929,6 +1052,7 @@
         } catch (e) { $("tgMsg").textContent = "Network error"; }
       };
       fetch("/api/auth-config").then((r) => r.json()).then((cfg) => {
+        if (inviteToken) return;
         if (!cfg.telegram_login_enabled || !cfg.telegram_bot_username) return;
         $("pwBox").appendChild($("pwForm"));
         $("tgLogin").classList.remove("hidden");
@@ -1166,9 +1290,23 @@
 
       // ---- goal (paper backtest on real data) ----
       function goalMsg(t, ok) { $("g-msg").textContent = t || ""; $("g-msg").style.color = ok ? "var(--profit)" : "var(--loss)"; }
+      let pendingMission = null;
+      let activeMission = JSON.parse(localStorage.getItem("activeMission") || "null");
+      function durationMs(v) {
+        const m = /^(\d+)(m|h|w)$/.exec(v || "");
+        if (!m) return 0;
+        return Number(m[1]) * (m[2] === "m" ? 60000 : m[2] === "h" ? 3600000 : 604800000);
+      }
+      function addMissionActivity(text) {
+        if (!text) return;
+        const box = $("mission-activity");
+        const stamp = new Date().toLocaleTimeString();
+        box.textContent = `[${stamp}] ${text}\n\n` + box.textContent;
+        box.classList.remove("hidden");
+      }
       function fmtPnl(v) { const n = Number(v) || 0; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100); }
       function verdictText(v) {
-        return ({ target_reached: "🎯 Target reached", max_drawdown: "🛑 Stopped: max drawdown", max_trades: "⏹ Stopped: max trades", continue: "Ran out of history before a stop rule" })[v] || v || "";
+        return ({ target_reached: "🎯 Target reached", max_drawdown: "🛑 Stopped: capital risk limit", max_trades: "⏹ Stopped: max trades", continue: "Plan window completed" })[v] || v || "";
       }
       // bcardSpark draws a Binance-style area sparkline (line + soft fill), green
       // when the run ends in profit, red otherwise.
@@ -1189,7 +1327,7 @@
         const cap = Number(st.capital || 100) || 100;
         const roi = (pnl / cap) * 100;
         $("bc-sym").textContent = st.symbol || normSym($("g-symbol").value) || "—";
-        const tags = [`<span class="bcard-tag">${escapeHtml(st.strategy || "")}</span>`, `<span class="bcard-tag">${escapeHtml(st.interval || "")}</span>`];
+        const tags = [`<span class="bcard-tag">${escapeHtml(st.strategy || "")}</span>`, `<span class="bcard-tag">${escapeHtml(st.duration || "")} plan</span>`, `<span class="bcard-tag">${escapeHtml(st.interval || "")} execution</span>`];
         if (st.used_ai) tags.push('<span class="bcard-tag ai">· AI</span>');
         $("bc-tags").innerHTML = tags.join(" ");
         $("bc-pnl").textContent = (up ? "+" : "") + (Math.round(pnl * 100) / 100); $("bc-pnl").className = "bcard-num mono " + (up ? "up" : "down");
@@ -1201,11 +1339,13 @@
           ["W / L", (st.wins || 0) + " / " + (st.losses || 0), ""],
           ["Capital", cap + " USDT", ""],
           ["Target", (st.profit_target || "0") + " USDT", ""],
-          ["Risk", (st.risk_pct || 0) + "%", ""],
+          ["Capital risk", (st.risk_pct || 0) + "%", ""],
+          ["Leverage use", (st.leverage_use_pct || 0) + "%", ""],
         ];
         $("bc-stats").innerHTML = cells.map(([k, v, cls]) => `<div class="bcard-cell"><div class="ck">${k}</div><div class="cv ${cls}">${escapeHtml(v)}</div></div>`).join("");
         $("bc-verdict").textContent = verdictText(st.verdict);
         $("g-card").classList.remove("hidden");
+        $("g-review-actions").classList.remove("hidden");
         const trades = d.trades || [];
         $("g-trades").innerHTML = trades.length
           ? trades.map((t) => `<div class="trade"><span class="tside ${t.side === "long" ? "up" : "down"}">${escapeHtml(t.side)}</span><span style="color:var(--muted)">${escapeHtml(t.outcome)}</span><span class="tpnl ${Number(t.pnl) >= 0 ? "up" : "down"}">${fmtPnl(t.pnl)}</span></div>`).join("")
@@ -1216,10 +1356,11 @@
       async function runGoal() {
         goalMsg("Running on real candles…", true);
         $("g-run").disabled = true;
+        $("g-review-actions").classList.add("hidden");
         const body = {
           profit: $("g-profit").value, capital: $("g-capital").value,
-          risk: parseInt($("g-risk").value, 10) || 5, symbol: $("g-symbol").value,
-          strategy: $("g-strategy").value, interval: $("g-interval").value, use_ai: $("g-ai").checked,
+          capital_risk_pct: parseInt($("g-risk").value, 10) || 5, leverage_use_pct: parseInt($("g-leverage").value, 10) || 25, symbol: $("g-symbol").value,
+          strategy: $("g-strategy").value, duration: $("g-duration").value, use_ai: $("g-ai").checked,
         };
         try {
           const r = await fetch("/api/goal/run", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
@@ -1227,15 +1368,17 @@
           if (!r.ok) { goalMsg(d.error || `Failed (${r.status})`); return; }
           if (!d.ai) goalMsg("");
           renderGoalResult(d); loadGoalHistory();
+          $("g-card").scrollIntoView({ behavior:"smooth", block:"center" });
         } catch (e) { goalMsg("Network error"); }
         finally { $("g-run").disabled = false; }
       }
       $("g-run").onclick = runGoal;
+      $("g-edit").onclick = () => { $("g-profit").focus(); $("view-orders").scrollIntoView({ behavior:"smooth", block:"start" }); };
       async function runLiveMission() {
         if (!confirm("Run a LIVE testnet Mission? ANNY will propose a real order on your active key — you still press Confirm before it places.")) return;
         goalMsg("Preparing live Mission…", true);
         $("g-live").disabled = true;
-        const body = { symbol: $("g-symbol").value, capital: $("g-capital").value, risk: parseInt($("g-risk").value, 10) || 5, strategy: $("g-strategy").value, interval: $("g-interval").value, use_ai: $("g-ai").checked };
+        const body = { symbol: $("g-symbol").value, capital: $("g-capital").value, capital_risk_pct: parseInt($("g-risk").value, 10) || 5, leverage_use_pct: parseInt($("g-leverage").value, 10) || 25, strategy: $("g-strategy").value, duration: $("g-duration").value, use_ai: $("g-ai").checked };
         try {
           const r = await fetch("/api/mission/prepare", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
           const d = await r.json().catch(() => ({}));
@@ -1244,9 +1387,10 @@
           if (d.need_key) { goalMsg("Add & activate a Binance key in Settings first."); navigate("settings"); return; }
           // Show the order + Confirm right here under the button, not in the chat box.
           $("g-confirm-out").textContent = d.output || ""; $("g-confirm-out").classList.remove("hidden");
+          pendingMission = d.mission || null;
           if (d.confirm_id) { missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); }
           else $("g-confirm-actions").classList.add("hidden");
-          $("g-confirm-out").scrollIntoView({ behavior: "smooth", block: "center" });
+          $("live-card").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (e) { goalMsg("Network error"); }
         finally { $("g-live").disabled = false; }
       }
@@ -1260,7 +1404,15 @@
         $("g-confirm-out").textContent = cancel ? "Cancelling…" : "Placing order on your active key…";
         try {
           const d = await (await fetch("/api/confirm", { method: "POST", headers: authHeaders(), body: JSON.stringify({ id, cancel }) })).json();
-          $("g-confirm-out").textContent = d.output || d.error || "Done.";
+          const output = d.output || d.error || "Done.";
+          $("g-confirm-out").textContent = output;
+          addMissionActivity(output);
+          if (!cancel && pendingMission) {
+            const startedAt = Date.now();
+            activeMission = { ...pendingMission, startedAt, deadline: startedAt + durationMs(pendingMission.duration) };
+            localStorage.setItem("activeMission", JSON.stringify(activeMission));
+          }
+          pendingMission = null;
           if (!cancel) { loadGoalHistory(); setTimeout(loadPositions, 1500); }
         } catch (e) { $("g-confirm-out").textContent = "Network error"; }
       }
@@ -1272,11 +1424,18 @@
         try {
           const d = await (await fetch("/api/positions", { headers: authHeaders() })).json();
           const ps = d.positions || [];
-          if (!ps.length) { box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No open positions. Run a live Mission to open one.</p>'; return; }
+          if (!ps.length) {
+            box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">No open position. Configure and assess a new plan above.</p>';
+            if (activeMission) { activeMission = null; localStorage.removeItem("activeMission"); }
+            return;
+          }
           box.innerHTML = ps.map((p) => {
             const pnl = Number(p.pnl) || 0, up = pnl >= 0, sideCls = p.side === "long" ? "up" : "down";
             const lev = Number(p.leverage) > 0 ? " " + p.leverage + "x" : "";
-            return `<div class="grun"><span><b>${escapeHtml(p.symbol)}</b> <span class="${sideCls}">${escapeHtml(p.side)}</span>${lev}<br><span style="color:var(--muted);font-size:0.75rem">entry ${formatPrice(p.entry)} · mark ${formatPrice(p.mark)}</span></span><span class="gp ${up ? "up" : "down"}">${fmtPnl(pnl)} USDT</span><button class="ghost" data-close="${escapeHtml(p.symbol)}" style="width:auto;padding:0.2rem 0.6rem;flex:0 0 auto">Close</button></div>`;
+            const meta = activeMission && activeMission.symbol === p.symbol ? activeMission : {};
+            const remain = meta.deadline ? Math.max(0, meta.deadline - Date.now()) : 0;
+            const remainText = meta.deadline ? Math.ceil(remain / 60000) + "m left" : "manual";
+            return `<div class="position-card"><div><b>${escapeHtml(p.symbol)}</b> <span class="${sideCls}">${escapeHtml(p.side)}</span>${lev}<span class="badge" style="float:right">${escapeHtml(remainText)}</span></div><div class="position-grid"><div><div class="pk">Entry</div><div class="pv">${formatPrice(p.entry)}</div></div><div><div class="pk">Mark</div><div class="pv">${formatPrice(p.mark)}</div></div><div><div class="pk">PnL</div><div class="pv ${up ? "up" : "down"}">${fmtPnl(pnl)} USDT</div></div><div><div class="pk">Take profit</div><div class="pv">${meta.take_profit ? formatPrice(meta.take_profit) : "—"}</div></div><div><div class="pk">Stop loss</div><div class="pv">${meta.stop_loss ? formatPrice(meta.stop_loss) : "—"}</div></div><div><div class="pk">Leverage</div><div class="pv">${p.leverage || meta.leverage || "—"}x</div></div></div><button class="ghost" data-close="${escapeHtml(p.symbol)}" style="width:100%">Close position</button></div>`;
           }).join("");
           box.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => closePosition(b.dataset.close)));
         } catch (e) { box.innerHTML = '<p style="font-size:0.85rem;color:#94A3B8">Could not load positions.</p>'; }
@@ -1292,7 +1451,7 @@
           const d = await r.json().catch(() => ({}));
           $("g-confirm-out").textContent = d.output || d.error || "Failed"; $("g-confirm-out").classList.remove("hidden");
           if (d.confirm_id) { missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); }
-          $("g-confirm-out").scrollIntoView({ behavior: "smooth", block: "center" });
+          $("live-card").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (e) {}
       }
       async function loadGoalHistory() {
@@ -1398,8 +1557,8 @@
           renderReco(strats, coins, d.total_runs || 0);
         } catch (e) { $("comm-strats").textContent = "Could not load community stats."; }
       }
-      const stratValue = { ema_cross: "ema", rsi_reversion: "rsi", macd: "macd", sma_cross: "sma", breakout: "breakout", auto: "auto" };
-      const KNOWN_STRATS = ["ema_cross", "rsi_reversion", "macd", "sma_cross", "breakout", "auto"];
+      const stratValue = { "anny_basic_v1.2": "anny_basic", ema_cross: "ema", rsi_reversion: "rsi", macd: "macd", sma_cross: "sma", breakout: "breakout", auto: "auto" };
+      const KNOWN_STRATS = ["anny_basic_v1.2", "ema_cross", "rsi_reversion", "macd", "sma_cross", "breakout", "auto"];
       // Recommend only a community-PROVEN (green) strategy/coin. When nothing is
       // green, don't push a money-loser — suggest exploring a strategy the crew
       // hasn't tested yet (or the least-bad), and leave the coin open. Still

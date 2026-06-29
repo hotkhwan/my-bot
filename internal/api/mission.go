@@ -1,12 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"bottrade/internal/backtest"
 	"bottrade/internal/campaign"
+	"bottrade/internal/decimal"
+	"bottrade/internal/domain"
 	"bottrade/internal/orders"
 	"bottrade/internal/signals"
 
@@ -23,21 +27,54 @@ import (
 
 const (
 	missionSLPct       = 0.01 // stop distance as a fraction of entry
-	missionLeverage    = 3    // fallback when no risk% is given
 	missionMaxLeverage = 100  // testnet cap (BTC testnet allows up to 125x)
 	missionMaxSizeUSDT = 200  // hard cap on notional so a mission can't go large
 )
 
-// missionLeverageFor maps the Goal's "Max risk (% of capital)" to leverage —
-// 30% → 30x, 100% → 100x — clamped to [1, missionMaxLeverage]. Testnet only.
-func missionLeverageFor(riskPct int) int {
-	lev := riskPct
-	if lev <= 0 {
-		lev = missionLeverage
+type timedMission struct {
+	UserID   int64
+	Symbol   string
+	Duration time.Duration
+}
+
+func planDuration(value string) time.Duration {
+	switch value {
+	case "15m":
+		return 15 * time.Minute
+	case "1h":
+		return time.Hour
+	case "2h":
+		return 2 * time.Hour
+	case "4h":
+		return 4 * time.Hour
+	case "8h":
+		return 8 * time.Hour
+	case "12h":
+		return 12 * time.Hour
+	case "24h":
+		return 24 * time.Hour
+	case "48h":
+		return 48 * time.Hour
+	case "1w":
+		return 7 * 24 * time.Hour
+	default:
+		return time.Hour
 	}
-	if lev > missionMaxLeverage {
-		lev = missionMaxLeverage
+}
+
+// missionLeverageFor applies a percentage to the configured safety ceiling.
+// Capital risk is deliberately not reused as leverage.
+func missionLeverageFor(usePct, maxLeverage int) int {
+	if usePct <= 0 {
+		usePct = 25
 	}
+	if usePct > 100 {
+		usePct = 100
+	}
+	if maxLeverage <= 0 || maxLeverage > missionMaxLeverage {
+		maxLeverage = missionMaxLeverage
+	}
+	lev := (maxLeverage*usePct + 99) / 100
 	if lev < 1 {
 		lev = 1
 	}
@@ -72,10 +109,11 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
 	}
 	symbol := normalizeSymbol(req.Symbol)
-	interval := req.Interval
-	if !allowedIntervals[interval] {
-		interval = "1h"
+	spec, ok := allowedDurations[strings.ToLower(strings.TrimSpace(req.Duration))]
+	if !ok {
+		spec = allowedDurations["1h"]
 	}
+	interval := spec.ExecutionInterval
 	strategyName := "ema"
 	switch req.Strategy {
 	case "rsi", "macd", "sma", "breakout", "auto":
@@ -111,7 +149,7 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	entry := candles[len(candles)-1].Close
 	sl, tp := missionBracket(side, entry)
 	size := missionSize(req.Capital)
-	leverage := missionLeverageFor(req.Risk)
+	leverage := missionLeverageFor(req.LeverageUsePct, s.cfg.App.MaxLeverage)
 
 	decision := signals.Decision{
 		Action:     signals.ActionOpen,
@@ -134,11 +172,62 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	if err != nil {
 		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 	}
+	s.timedMissions.Store(confirmation.ID, timedMission{
+		UserID: userID, Symbol: symbol, Duration: planDuration(req.Duration),
+	})
 	s.usage.Incr(claimsOf(c).Subject, "mission") // count the attempt toward the daily limit
 	return c.JSON(fiber.Map{
-		"output":     "🚀 Review this live Mission (testnet) — press Confirm to place it on your active key:\n\n" + orders.Summary(intent) + "\n\n🤖 Once filled, ANNY auto-manages the stop — moving it to break-even and trailing to lock profit.",
+		"output":     "🚀 Review this live Mission (testnet) — Confirm authorizes the entry and a timed close at the end of the plan if TP/SL has not closed it first:\n\n" + orders.Summary(intent) + "\n\n🤖 ANNY manages the protective stop while the plan is active.",
 		"confirm_id": confirmation.ID,
+		"mission": fiber.Map{
+			"symbol": symbol, "side": side, "entry": trimPrice(entry),
+			"stop_loss": trimPrice(sl), "take_profit": trimPrice(tp),
+			"leverage": leverage, "duration": req.Duration,
+		},
 	})
+}
+
+func (s *Server) scheduleTimedMissionClose(m timedMission) {
+	if !s.cfg.App.CampaignLiveEnabled || !s.cfg.Binance.Testnet ||
+		s.cfg.App.RealTradingEnabled || s.cfg.App.DryRun || m.Duration <= 0 {
+		return
+	}
+	go func() {
+		timer := time.NewTimer(m.Duration)
+		defer timer.Stop()
+		<-timer.C
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		positions, err := s.orders.Positions(ctx, m.UserID)
+		if err != nil {
+			s.logger.Warn("timed mission: load positions failed", "symbol", m.Symbol, "error", err)
+			return
+		}
+		open := false
+		for _, p := range positions {
+			if strings.EqualFold(p.Symbol, m.Symbol) && !p.Amount.IsZero() {
+				open = true
+				break
+			}
+		}
+		if !open {
+			return
+		}
+		intent := domain.Intent{Type: domain.IntentClose, Close: &domain.CloseIntent{
+			Symbol: m.Symbol, All: true, ResolvedPercent: decimal.NewFromInt(100),
+		}}
+		confirmation, err := s.orders.Prepare(ctx, m.UserID, intent)
+		if err != nil {
+			s.logger.Warn("timed mission: prepare close failed", "symbol", m.Symbol, "error", err)
+			return
+		}
+		if _, err := s.orders.Confirm(ctx, m.UserID, confirmation.ID); err != nil {
+			s.logger.Warn("timed mission: confirm close failed", "symbol", m.Symbol, "error", err)
+			return
+		}
+		s.logger.Info("timed mission closed at plan deadline", "user_id", m.UserID, "symbol", m.Symbol)
+	}()
 }
 
 // hasActiveKey reports whether the user has a Binance key profile marked active.

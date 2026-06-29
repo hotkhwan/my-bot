@@ -4,18 +4,24 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"bottrade/internal/auth"
 	"bottrade/internal/config"
 	"bottrade/internal/dashboard"
+	appemail "bottrade/internal/email"
+	"bottrade/internal/interest"
 	"bottrade/internal/journal"
 	"bottrade/internal/marketdata"
 	"bottrade/internal/orders"
@@ -50,25 +56,28 @@ type eventStream interface {
 }
 
 type Server struct {
-	cfg         config.Config
-	processor   *signals.Processor
-	users       *users.Service
-	report      *journal.Service
-	tokenizer   *auth.Tokenizer
-	credentials *auth.CredentialService
-	stream      eventStream
-	market      *marketdata.BinanceProvider
-	orders      *orders.Service
-	parser      parser.Parser
-	advisor     signals.Advisor
-	goalRuns    GoalRunStore
-	access      AccessStore
-	aiSecrets   AISecretStore
-	favourites  FavouritesStore
-	keyring     *auth.Keyring
-	usage       *memUsage
-	logger      *slog.Logger
-	app         *fiber.App
+	cfg           config.Config
+	processor     *signals.Processor
+	users         *users.Service
+	interest      *interest.Service
+	email         appemail.Sender
+	report        *journal.Service
+	tokenizer     *auth.Tokenizer
+	credentials   *auth.CredentialService
+	stream        eventStream
+	market        *marketdata.BinanceProvider
+	orders        *orders.Service
+	parser        parser.Parser
+	advisor       signals.Advisor
+	goalRuns      GoalRunStore
+	access        AccessStore
+	aiSecrets     AISecretStore
+	favourites    FavouritesStore
+	keyring       *auth.Keyring
+	usage         *memUsage
+	timedMissions sync.Map // confirmation id -> timedMission; dev/testnet only
+	logger        *slog.Logger
+	app           *fiber.App
 }
 
 // Option customises a Server without breaking existing call sites.
@@ -77,6 +86,15 @@ type Option func(*Server)
 // WithUsers enables the registration/login endpoints backed by svc.
 func WithUsers(svc *users.Service) Option {
 	return func(s *Server) { s.users = svc }
+}
+
+// WithInterest enables the public product-interest email endpoint.
+func WithInterest(svc *interest.Service) Option {
+	return func(s *Server) { s.interest = svc }
+}
+
+func WithEmail(sender appemail.Sender) Option {
+	return func(s *Server) { s.email = sender }
 }
 
 // WithTokenizer enables session JWTs: login returns a token and protected
@@ -214,7 +232,8 @@ func (s *Server) routes() {
 		Expiration:   webhookRateWindow,
 		LimitReached: webhookRateLimited,
 	})
-	s.app.Post("/api/register", authLimiter, s.handleRegister)
+	s.app.Post("/api/interest", authLimiter, s.handleInterest)
+	s.app.Post("/api/invite-register", authLimiter, s.handleInviteRegister)
 	s.app.Post("/api/login", authLimiter, s.handleLogin)
 	s.app.Post("/api/telegram-auth", authLimiter, s.handleTelegramAuth)
 	s.app.Post("/api/telegram-login", authLimiter, s.handleTelegramLogin)
@@ -240,6 +259,9 @@ func (s *Server) routes() {
 	s.app.Post("/api/access/request", s.requireAuth, s.handleAccessRequest)
 	s.app.Get("/api/admin/pending", s.requireAuth, s.handleAdminPending)
 	s.app.Get("/api/admin/members", s.requireAuth, s.handleAdminMembers)
+	s.app.Get("/api/admin/interests", s.requireAuth, s.handleAdminInterests)
+	s.app.Post("/api/admin/interests/invite", s.requireAuth, s.handleAdminInterestInvite)
+	s.app.Post("/api/admin/interests/waitlist", s.requireAuth, s.handleAdminInterestWaitlist)
 	s.app.Post("/api/admin/approve", s.requireAuth, s.handleAdminApprove)
 	s.app.Post("/api/admin/revoke", s.requireAuth, s.handleAdminRevoke)
 	s.app.Post("/api/admin/make-admin", s.requireAuth, s.handleAdminMakeAdmin)
@@ -402,6 +424,138 @@ func (s *Server) handleRegister(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"id": user.ID, "username": user.Username, "role": user.Role})
+}
+
+func (s *Server) handleInterest(c fiber.Ctx) error {
+	if s.interest == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "interest registration is not enabled"})
+	}
+	var body struct {
+		Email  string `json:"email"`
+		Reason string `json:"reason"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(c.Body(), &body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
+	}
+	_, err := s.interest.Register(c.Context(), body.Email, body.Reason, body.Source)
+	if err != nil {
+		if errors.Is(err, interest.ErrAlreadyRegistered) {
+			return c.JSON(fiber.Map{"saved": true})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "please enter a valid email"})
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"saved": true})
+}
+
+func inviteHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func (s *Server) handleAdminInterests(c fiber.Ctx) error {
+	if !s.isAdmin(c) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "admin only"})
+	}
+	rows, err := s.interest.All(c.Context())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "could not load interests"})
+	}
+	return c.JSON(fiber.Map{"interests": rows})
+}
+
+func (s *Server) handleAdminInterestInvite(c fiber.Ctx) error {
+	if !s.isAdmin(c) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "admin only"})
+	}
+	var body struct {
+		Email string `json:"email"`
+	}
+	if json.Unmarshal(c.Body(), &body) != nil || strings.TrimSpace(body.Email) == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "email is required"})
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "could not create invite"})
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	expires := time.Now().UTC().Add(7 * 24 * time.Hour)
+	if err := s.interest.SetInvite(c.Context(), strings.ToLower(strings.TrimSpace(body.Email)), inviteHash(token), expires); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "could not save invite"})
+	}
+	base := strings.TrimRight(s.cfg.Telegram.WebAppURL, "/")
+	if base == "" {
+		base = "https://" + c.Hostname()
+	}
+	link := base + "/?invite=" + token
+	sent := false
+	if s.email != nil {
+		ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+		defer cancel()
+		if err := s.email.SendInvite(ctx, body.Email, link); err != nil {
+			s.logger.Warn("invite email failed", "error", err)
+			return c.Status(502).JSON(fiber.Map{"error": "invite saved but email could not be sent", "invite_url": link})
+		}
+		sent = true
+	}
+	return c.JSON(fiber.Map{"sent": sent, "invite_url": link, "expires_at": expires})
+}
+
+func (s *Server) handleAdminInterestWaitlist(c fiber.Ctx) error {
+	if !s.isAdmin(c) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "admin only"})
+	}
+	var body struct {
+		Email string `json:"email"`
+	}
+	if json.Unmarshal(c.Body(), &body) != nil || strings.TrimSpace(body.Email) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "email is required"})
+	}
+	email := strings.ToLower(strings.TrimSpace(body.Email))
+	if s.email == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "email is not configured"})
+	}
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.email.SendWaitlistFull(ctx, email); err != nil {
+		s.logger.Warn("waitlist email failed", "error", err)
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "email could not be sent; status was not changed"})
+	}
+	if err := s.interest.MarkWaitlisted(c.Context(), email); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "email sent but waitlist status could not be saved"})
+	}
+	return c.JSON(fiber.Map{"waitlisted": true})
+}
+
+func (s *Server) handleInviteRegister(c fiber.Ctx) error {
+	if s.users == nil || s.interest == nil || s.tokenizer == nil {
+		return c.Status(501).JSON(fiber.Map{"error": "invite registration is not enabled"})
+	}
+	var body struct{ Token, Username, Password string }
+	if err := json.Unmarshal(c.Body(), &body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON body"})
+	}
+	rec, err := s.interest.FindInvite(c.Context(), inviteHash(body.Token))
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invite is invalid or expired"})
+	}
+	user, err := s.users.Register(c.Context(), body.Username, body.Password)
+	if err != nil {
+		if errors.Is(err, users.ErrUsernameTaken) {
+			return c.Status(409).JSON(fiber.Map{"error": "username already taken"})
+		}
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	if err := s.access.Request(c.Context(), user.ID, user.Username); err != nil {
+		// The account is already durable. Let the member sign in and retry the
+		// normal Request access action instead of trapping a valid account.
+		s.logger.Warn("invited member access request failed", "error", err)
+	}
+	if err := s.interest.MarkRegistered(c.Context(), rec.Email); err != nil {
+		s.logger.Warn("mark invite registered failed", "error", err)
+	}
+	s.notifyAdmin("New invited member waiting for approval: " + user.Username + " (" + user.ID + ")")
+	return c.Status(201).JSON(s.loginResponse(user.ID, user.Username, string(user.Role)))
 }
 
 func (s *Server) handleReport(c fiber.Ctx) error {

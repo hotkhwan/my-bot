@@ -49,7 +49,8 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 		"GET /fapi/v1/exchangeInfo",
 		"POST /fapi/v1/marginType",
 		"POST /fapi/v1/leverage",
-		"POST /fapi/v1/order",     // entry (MARKET) stays on the classic endpoint
+		"POST /fapi/v1/order",     // post-only maker entry
+		"GET /fapi/v1/order",      // confirm it filled before placing protection
 		"POST /fapi/v1/algoOrder", // stop loss (conditional)
 		"POST /fapi/v1/algoOrder", // take profit (conditional)
 	}
@@ -63,17 +64,17 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 	}
 
 	entry := requests[3].Query
-	if entry.Get("type") != "MARKET" || entry.Get("side") != "BUY" || entry.Get("quantity") != "0.001" {
-		t.Fatalf("entry query = %s, want MARKET BUY quantity 0.001", entry.Encode())
+	if entry.Get("type") != "LIMIT" || entry.Get("timeInForce") != "GTX" || entry.Get("side") != "BUY" || entry.Get("quantity") != "0.001" {
+		t.Fatalf("entry query = %s, want post-only LIMIT BUY quantity 0.001", entry.Encode())
 	}
-	if entry.Get("price") != "" || entry.Get("timeInForce") != "" {
-		t.Fatalf("entry query = %s, want no price/timeInForce on a MARKET order", entry.Encode())
+	if entry.Get("price") != "67500" {
+		t.Fatalf("entry query = %s, want limit price 67500", entry.Encode())
 	}
 	if entry.Get("signature") == "" || entry.Get("timestamp") == "" {
 		t.Fatalf("entry query = %s, want signed request", entry.Encode())
 	}
 
-	stop := requests[4].Query
+	stop := requests[5].Query
 	if stop.Get("algoType") != "CONDITIONAL" || stop.Get("type") != "STOP_MARKET" ||
 		stop.Get("closePosition") != "true" || stop.Get("triggerPrice") == "" {
 		t.Fatalf("stop query = %s, want conditional close-position STOP_MARKET with triggerPrice", stop.Encode())
@@ -82,7 +83,7 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 		t.Fatalf("stop query = %s, want clientAlgoId and no legacy stopPrice", stop.Encode())
 	}
 
-	takeProfit := requests[5].Query
+	takeProfit := requests[6].Query
 	if takeProfit.Get("algoType") != "CONDITIONAL" || takeProfit.Get("type") != "TAKE_PROFIT_MARKET" ||
 		takeProfit.Get("closePosition") != "true" || takeProfit.Get("triggerPrice") == "" {
 		t.Fatalf("take-profit query = %s, want conditional close-position TAKE_PROFIT_MARKET with triggerPrice", takeProfit.Encode())
@@ -331,6 +332,11 @@ func newBinanceTestServer(t *testing.T) *binanceTestServer {
 			if r.Method == http.MethodDelete {
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{"clientOrderId":"` + r.URL.Query().Get("origClientOrderId") + `","orderId":1,"symbol":"BTCUSDT","status":"CANCELED"}`))
+				return
+			}
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"clientOrderId":"` + r.URL.Query().Get("origClientOrderId") + `","orderId":1001,"symbol":"BTCUSDT","status":"FILLED","type":"LIMIT","executedQty":"0.001"}`))
 				return
 			}
 			server.mu.Lock()

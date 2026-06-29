@@ -106,6 +106,7 @@ func (s *Server) handleConfirm(c fiber.Ctx) error {
 	}
 
 	if body.Cancel {
+		s.timedMissions.Delete(body.ID)
 		if err := s.orders.Cancel(c.Context(), userID, body.ID); err != nil {
 			return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 		}
@@ -115,6 +116,9 @@ func (s *Server) handleConfirm(c fiber.Ctx) error {
 	result, err := s.orders.Confirm(c.Context(), userID, body.ID)
 	if err != nil {
 		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
+	}
+	if value, ok := s.timedMissions.LoadAndDelete(body.ID); ok {
+		s.scheduleTimedMissionClose(value.(timedMission))
 	}
 	out := result.Message
 	if strings.TrimSpace(out) == "" {
