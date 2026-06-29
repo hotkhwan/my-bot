@@ -16,6 +16,7 @@ import (
 	"bottrade/internal/auth"
 	"bottrade/internal/config"
 	"bottrade/internal/dashboard"
+	"bottrade/internal/interest"
 	"bottrade/internal/journal"
 	"bottrade/internal/marketdata"
 	"bottrade/internal/orders"
@@ -53,6 +54,7 @@ type Server struct {
 	cfg         config.Config
 	processor   *signals.Processor
 	users       *users.Service
+	interest    *interest.Service
 	report      *journal.Service
 	tokenizer   *auth.Tokenizer
 	credentials *auth.CredentialService
@@ -77,6 +79,11 @@ type Option func(*Server)
 // WithUsers enables the registration/login endpoints backed by svc.
 func WithUsers(svc *users.Service) Option {
 	return func(s *Server) { s.users = svc }
+}
+
+// WithInterest enables the public product-interest email endpoint.
+func WithInterest(svc *interest.Service) Option {
+	return func(s *Server) { s.interest = svc }
 }
 
 // WithTokenizer enables session JWTs: login returns a token and protected
@@ -214,7 +221,10 @@ func (s *Server) routes() {
 		Expiration:   webhookRateWindow,
 		LimitReached: webhookRateLimited,
 	})
+	// Kept for compatibility with existing provisioners; the dashboard no
+	// longer exposes self-registration. New visitors use /api/interest instead.
 	s.app.Post("/api/register", authLimiter, s.handleRegister)
+	s.app.Post("/api/interest", authLimiter, s.handleInterest)
 	s.app.Post("/api/login", authLimiter, s.handleLogin)
 	s.app.Post("/api/telegram-auth", authLimiter, s.handleTelegramAuth)
 	s.app.Post("/api/telegram-login", authLimiter, s.handleTelegramLogin)
@@ -402,6 +412,27 @@ func (s *Server) handleRegister(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"id": user.ID, "username": user.Username, "role": user.Role})
+}
+
+func (s *Server) handleInterest(c fiber.Ctx) error {
+	if s.interest == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "interest registration is not enabled"})
+	}
+	var body struct {
+		Email  string `json:"email"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(c.Body(), &body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
+	}
+	_, err := s.interest.Register(c.Context(), body.Email, body.Source)
+	if err != nil {
+		if errors.Is(err, interest.ErrAlreadyRegistered) {
+			return c.JSON(fiber.Map{"saved": true})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "please enter a valid email"})
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"saved": true})
 }
 
 func (s *Server) handleReport(c fiber.Ctx) error {

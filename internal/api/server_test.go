@@ -20,6 +20,7 @@ import (
 	"bottrade/internal/auth"
 	"bottrade/internal/config"
 	"bottrade/internal/decimal"
+	"bottrade/internal/interest"
 	"bottrade/internal/journal"
 	"bottrade/internal/realtime"
 	"bottrade/internal/signals"
@@ -636,6 +637,37 @@ func TestRegisterDisabledWithoutUserService(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Fatalf("status = %d, want 501 when users disabled", resp.StatusCode)
+	}
+}
+
+func TestInterestSignup(t *testing.T) {
+	cfg := config.Config{}
+	service, err := interest.NewService(interest.NewMemoryRepository())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(cfg, nil, nil, WithInterest(service))
+
+	post := func(body string) (int, string) {
+		req := httptest.NewRequest(http.MethodPost, "/api/interest", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := server.App().Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		data, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(data)
+	}
+
+	if status, _ := post(`{"email":"Hello@Example.com","source":"login"}`); status != http.StatusCreated {
+		t.Fatalf("first signup status = %d, want 201", status)
+	}
+	if status, _ := post(`{"email":"hello@example.com","source":"login"}`); status != http.StatusOK {
+		t.Fatalf("duplicate signup status = %d, want 200", status)
+	}
+	if status, _ := post(`{"email":"not-an-email"}`); status != http.StatusBadRequest {
+		t.Fatalf("invalid signup status = %d, want 400", status)
 	}
 }
 

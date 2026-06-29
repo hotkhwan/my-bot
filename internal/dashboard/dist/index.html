@@ -285,6 +285,25 @@
       .fhash { font-family: var(--font-mono); font-size: 0.6rem; color: var(--muted); padding-bottom: 0.5rem; border-bottom: 1px solid #ffffff14; }
       .fhash:last-child { border-bottom: 0; }
       .hidden { display: none; }
+      #view-login { max-width: 34rem; margin: 2.2rem auto 0; }
+      .login-intro { text-align: center; margin: 0.7rem auto 1.15rem; max-width: 29rem; line-height: 1.55; }
+      .login-card { padding: 1.35rem; }
+      .login-block { text-align: center; }
+      .login-block p { margin: 0.35rem 0 0.85rem; }
+      #pwForm { text-align: left; }
+      .login-divider { display: flex; align-items: center; gap: 0.75rem; margin: 1.2rem 0; color: var(--muted); font-size: 0.75rem; }
+      .login-divider::before, .login-divider::after { content: ""; height: 1px; flex: 1; background: rgba(148, 163, 184, 0.16); }
+      .login-submit { width: min(100%, 18rem); min-height: 2.75rem; margin: 0.95rem auto 0; display: block; }
+      .interest-box { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(148, 163, 184, 0.14); }
+      .interest-box strong { display: block; text-align: center; }
+      .interest-box p { text-align: center; margin: 0.35rem 0 0.75rem; font-size: 0.84rem; line-height: 1.5; }
+      .interest-row { display: grid; grid-template-columns: 1fr auto; gap: 0.55rem; align-items: stretch; }
+      .interest-row button { min-width: 8rem; }
+      @media (max-width: 30rem) {
+        #view-login { margin-top: 1rem; }
+        .interest-row { grid-template-columns: 1fr; }
+        .interest-row button { width: 100%; }
+      }
     </style>
   </head>
   <body>
@@ -372,35 +391,42 @@
 
       <!-- LOGIN -->
       <section id="view-login">
-        <p>Trade Binance Futures from one place. Telegram is the backend.</p>
-        <div class="card">
-          <div id="tgLogin" class="hidden">
+        <p class="login-intro">Plan entries and exits with clear risk context. Connect with Telegram or log in to your existing account.</p>
+        <div class="card login-card">
+          <div id="tgLogin" class="hidden login-block">
             <strong>Log in with Telegram</strong>
-            <p style="margin:0.3rem 0 0.6rem">One click — same account as the bot.</p>
+            <p>Use the same account as the ANNY bot.</p>
             <div id="tgWidget"></div>
             <div class="msg" id="tgMsg"></div>
-            <details style="margin-top:0.6rem"><summary style="cursor:pointer;color:var(--muted);font-size:0.85rem">Or use a username &amp; password</summary><div id="pwBox"></div></details>
+            <div class="login-divider">or use your existing account</div>
+            <div id="pwBox"></div>
           </div>
           <div id="pwForm">
-            <strong>Register / Log in</strong>
+            <strong>Log in</strong>
             <label for="username">Username</label>
-            <input id="username" autocomplete="username" />
-            <label for="password">Password (min 8 chars)</label>
+            <input id="username" autocomplete="username" placeholder="Your username" />
+            <label for="password">Password</label>
             <input id="password" type="password" autocomplete="current-password" />
-            <div class="actions">
-              <button class="primary" id="register">Register</button>
-              <button class="ghost" id="login">Log in</button>
-            </div>
+            <button class="primary login-submit" id="login" type="button">Log in</button>
             <div class="msg" id="msg"></div>
           </div>
+          <form class="interest-box" id="interest-form">
+            <strong>Interested in early access?</strong>
+            <p>Leave your email. We’ll only use it for ANNY access and product updates.</p>
+            <div class="interest-row">
+              <input id="interest-email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" required />
+              <button class="ghost" id="interest-submit" type="submit">Keep me posted</button>
+            </div>
+            <div class="msg" id="interest-msg" role="status" aria-live="polite"></div>
+          </form>
         </div>
       </section>
 
       <!-- ORDERS (Trade) -->
       <section id="view-orders" class="hidden">
         <div class="card">
-          <strong>Goal — paper test on real data</strong>
-          <p style="margin:0.3rem 0 0.6rem">Set a profit goal; it runs your strategy over real Binance candles and shows the real stats. No orders are placed.</p>
+          <strong>Entry / exit plan — paper test on real data</strong>
+          <p style="margin:0.3rem 0 0.6rem">Explore an entry/exit plan over historical Binance candles. Results estimate maker-first entries and taker exits; no orders are placed.</p>
           <div id="g-reco" class="reco hidden"></div>
           <div class="ticket">
             <div class="grid2">
@@ -436,7 +462,7 @@
             </div>
             <div class="bcard-mid">
               <div>
-                <div class="bcard-lbl">PnL (USDT)</div>
+                <div class="bcard-lbl">Estimated net PnL (USDT)</div>
                 <div class="bcard-num mono" id="bc-pnl">+0.00</div>
                 <div class="bcard-roi mono" id="bc-roi"></div>
               </div>
@@ -916,8 +942,33 @@
           else show(d.error || `Failed (${r.status})`, false);
         } catch (e) { show("Network error", false); }
       }
-      $("register").onclick = () => submit("/api/register");
       $("login").onclick = () => submit("/api/login");
+      $("password").addEventListener("keydown", (e) => { if (e.key === "Enter") $("login").click(); });
+
+      $("interest-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const button = $("interest-submit"), msg = $("interest-msg");
+        button.disabled = true;
+        msg.textContent = "Saving…";
+        msg.style.color = "var(--muted)";
+        try {
+          const r = await fetch("/api/interest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: $("interest-email").value, source: "login" }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.error || "Could not save your email");
+          $("interest-email").value = "";
+          msg.textContent = "You’re on the list. We’ll keep you posted.";
+          msg.style.color = "var(--profit)";
+        } catch (err) {
+          msg.textContent = err.message || "Network error";
+          msg.style.color = "var(--loss)";
+        } finally {
+          button.disabled = false;
+        }
+      });
 
       // ---- auth: Telegram widget ----
       window.onTelegramAuth = async (user) => {

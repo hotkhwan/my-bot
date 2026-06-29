@@ -31,6 +31,7 @@ type ExecutorConfig struct {
 	RequestTimeout       time.Duration
 	ExchangeInfoCacheTTL time.Duration
 	HTTPClient           *http.Client
+	MakerEntryTimeout    time.Duration
 }
 
 type Executor struct {
@@ -57,6 +58,9 @@ func NewExecutor(cfg ExecutorConfig, logger *slog.Logger) *Executor {
 	}
 	if cfg.ExchangeInfoCacheTTL <= 0 {
 		cfg.ExchangeInfoCacheTTL = 15 * time.Minute
+	}
+	if cfg.MakerEntryTimeout <= 0 {
+		cfg.MakerEntryTimeout = 2 * time.Second
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -172,16 +176,10 @@ func (e *Executor) executeOpen(ctx context.Context, confirmation orders.Confirma
 	}
 
 	entrySide, exitSide := orderSides(intent.Side)
-	// Entry is a MARKET order: it fills immediately (taker) so a mission can never
-	// hang on an unfilled limit. The signal's entry price still drives the SL/TP
-	// brackets below; the actual fill is at the prevailing market price.
-	entryOrder, err := e.newOrder(ctx, url.Values{
-		"symbol":           {intent.Symbol},
-		"side":             {entrySide},
-		"type":             {"MARKET"},
-		"quantity":         {quantity.String()},
-		"newClientOrderId": {clientOrderID(confirmation.ID, "entry")},
-	})
+	// Try a post-only limit first so an entry that can rest on the book receives
+	// maker treatment. The bounded wait is essential: an unfilled entry must not
+	// leave a mission hanging. Any remainder falls back to MARKET (taker).
+	entryOrder, err := e.makerFirstEntry(ctx, intent.Symbol, entrySide, entry, quantity, confirmation.ID)
 	if err != nil {
 		return orders.ExecutionResult{}, fmt.Errorf("place entry order: %w", err)
 	}
@@ -236,6 +234,76 @@ func (e *Executor) executeOpen(ctx context.Context, confirmation orders.Confirma
 			takeProfitOrder.AlgoID,
 		),
 	}, nil
+}
+
+func (e *Executor) makerFirstEntry(ctx context.Context, symbol, side string, price, quantity decimal.Decimal, confirmationID string) (orderResponse, error) {
+	limitID := clientOrderID(confirmationID, "entry")
+	limit, err := e.newOrder(ctx, url.Values{
+		"symbol":           {symbol},
+		"side":             {side},
+		"type":             {"LIMIT"},
+		"timeInForce":      {"GTX"},
+		"price":            {price.String()},
+		"quantity":         {quantity.String()},
+		"newClientOrderId": {limitID},
+	})
+	if err != nil {
+		var rejected apiError
+		if !apiErrorAs(err, &rejected) {
+			// A transport failure is ambiguous: Binance may have accepted the
+			// limit even though we missed the response. Never add a market order.
+			return orderResponse{}, err
+		}
+	}
+	if err == nil {
+		deadline := time.Now().Add(e.cfg.MakerEntryTimeout)
+		for {
+			status, statusErr := e.queryOrder(ctx, symbol, limitID)
+			if statusErr != nil {
+				_ = e.cancelOrder(ctx, symbol, limitID)
+				return orderResponse{}, statusErr
+			}
+			if status.Status == "FILLED" {
+				return status, nil
+			}
+			if time.Now().After(deadline) {
+				limit = status
+				break
+			}
+			select {
+			case <-ctx.Done():
+				_ = e.cancelOrder(context.Background(), symbol, limitID)
+				return orderResponse{}, ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		cancelled, cancelErr := e.cancelOrderStatus(ctx, symbol, limitID)
+		if cancelErr != nil {
+			return orderResponse{}, fmt.Errorf("cancel unfilled maker entry: %w", cancelErr)
+		}
+		// The cancel response is authoritative for fills racing the last poll.
+		if cancelled.ExecutedQty != "" {
+			limit = cancelled
+		}
+	}
+
+	executed := decimal.MustParse("0")
+	if strings.TrimSpace(limit.ExecutedQty) != "" {
+		if parsed, parseErr := decimal.Parse(limit.ExecutedQty); parseErr == nil {
+			executed = parsed
+		}
+	}
+	remaining := quantity.Sub(executed)
+	if !remaining.IsPositive() {
+		return limit, nil
+	}
+	return e.newOrder(ctx, url.Values{
+		"symbol":           {symbol},
+		"side":             {side},
+		"type":             {"MARKET"},
+		"quantity":         {remaining.String()},
+		"newClientOrderId": {clientOrderID(confirmationID, "entrym")},
+	})
 }
 
 func (e *Executor) executeClose(ctx context.Context, confirmation orders.Confirmation) (orders.ExecutionResult, error) {
@@ -458,6 +526,15 @@ func (e *Executor) newOrder(ctx context.Context, params url.Values) (orderRespon
 	return response, nil
 }
 
+func (e *Executor) queryOrder(ctx context.Context, symbol, clientOrderID string) (orderResponse, error) {
+	var response orderResponse
+	err := e.signedRequest(ctx, http.MethodGet, "/fapi/v1/order", url.Values{
+		"symbol":            {symbol},
+		"origClientOrderId": {clientOrderID},
+	}, &response)
+	return response, err
+}
+
 func (e *Executor) newAlgoOrder(ctx context.Context, params url.Values) (algoOrderResponse, error) {
 	var response algoOrderResponse
 	if err := e.signedRequest(ctx, http.MethodPost, "/fapi/v1/algoOrder", params, &response); err != nil {
@@ -498,11 +575,17 @@ func (e *Executor) CurrentStop(ctx context.Context, symbol string) (monitor.Stop
 }
 
 func (e *Executor) cancelOrder(ctx context.Context, symbol string, clientOrderID string) error {
-	var response map[string]any
-	return e.signedRequest(ctx, http.MethodDelete, "/fapi/v1/order", url.Values{
+	_, err := e.cancelOrderStatus(ctx, symbol, clientOrderID)
+	return err
+}
+
+func (e *Executor) cancelOrderStatus(ctx context.Context, symbol string, clientOrderID string) (orderResponse, error) {
+	var response orderResponse
+	err := e.signedRequest(ctx, http.MethodDelete, "/fapi/v1/order", url.Values{
 		"symbol":            {symbol},
 		"origClientOrderId": {clientOrderID},
 	}, &response)
+	return response, err
 }
 
 // MoveStopLoss replaces the stop-loss for an open position. It places the fresh
@@ -815,6 +898,7 @@ type orderResponse struct {
 	Symbol        string `json:"symbol"`
 	Status        string `json:"status"`
 	Type          string `json:"type"`
+	ExecutedQty   string `json:"executedQty"`
 }
 
 // algoOrderResponse is the response shape of /fapi/v1/algoOrder, which uses

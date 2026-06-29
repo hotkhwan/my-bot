@@ -4,11 +4,12 @@ This repo is a Go Telegram trading bot for Binance Futures. Codex is the primary
 
 ## Session Startup Checklist
 
-1. Read `AGENT.md`, `CLAUDE.md`, and `trading_bot_plan.md`.
-2. Read `TRADING_BOT_REVIEW.md` when planning larger changes.
+1. Read `AGENT.md`, `CLAUDE.md`, `docs/AGENT_MEMORY.md`, and `docs/plan/trading_bot_plan.md`.
+2. Read `docs/plan/TRADING_BOT_REVIEW.md` when planning larger changes.
 3. Check the current tree before editing. Preserve user changes.
 4. Keep the stack aligned with Go, optional Fiber v3, MongoDB Atlas, and S3-compatible storage.
 5. Keep real trading disabled by default.
+6. Use `.codex/skills/my-bot-dev/SKILL.md` for the Codex development/release workflow.
 
 ## Core Direction
 

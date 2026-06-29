@@ -39,7 +39,7 @@ type PaperConfig struct {
 	// overrides the adaptive stop. Default 0 → ATR-adaptive (below).
 	FeeRate float64 // per-side fee fraction; seeds EntryFee/ExitFee when those
 	// are unset. Default 0.0004 (0.04% taker). Kept for back-compat.
-	EntryFeeRate float64 // fee on the entry fill; default = FeeRate (taker: entry is MARKET).
+	EntryFeeRate float64 // fee on entry; default 0.0002 (maker-first LIMIT).
 	ExitFeeRate  float64 // fee on the exit fill; default = FeeRate (taker: SL/TP/close are MARKET).
 	MaxHoldBars  int     // force-close after N bars if neither level hits; default 24
 	WarmupBars   int     // bars before the first trade is allowed; default 30
@@ -129,11 +129,10 @@ func RunPaper(cfg PaperConfig, candles []marketdata.Candle) (PaperResult, error)
 	} else if cfg.FeeRate == 0 {
 		cfg.FeeRate = 0.0004
 	}
-	// Entry and exit are billed separately so each leg can model maker vs taker.
-	// Today both default to the taker FeeRate: entry is a MARKET order and every
-	// exit (SL/TP/close) is MARKET too, so each leg crosses the book.
+	// Entry and exit are billed separately. Live execution attempts a post-only
+	// maker entry first, while protective exits remain taker orders.
 	if cfg.EntryFeeRate <= 0 {
-		cfg.EntryFeeRate = cfg.FeeRate
+		cfg.EntryFeeRate = 0.0002
 	}
 	if cfg.ExitFeeRate <= 0 {
 		cfg.ExitFeeRate = cfg.FeeRate

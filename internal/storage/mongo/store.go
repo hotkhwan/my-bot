@@ -29,6 +29,7 @@ type Store struct {
 	access        *mongodriver.Collection
 	aiKeys        *mongodriver.Collection
 	favourites    *mongodriver.Collection
+	interest      *mongodriver.Collection
 }
 
 // AIKeysCollection exposes the per-user AI-key collection.
@@ -87,6 +88,7 @@ func Connect(ctx context.Context, cfg Config) (*Store, error) {
 		access:        db.Collection("crew_access"),
 		aiKeys:        db.Collection("ai_keys"),
 		favourites:    db.Collection("favourites"),
+		interest:      db.Collection("interest_signups"),
 	}
 	if err := store.ensureIndexes(ctx); err != nil {
 		_ = client.Disconnect(ctx)
@@ -227,6 +229,14 @@ func (s *Store) ensureIndexes(ctx context.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("create user indexes: %w", err)
+	}
+
+	_, err = s.interest.Indexes().CreateOne(ctx, mongodriver.IndexModel{
+		Keys:    bson.D{{Key: "email", Value: 1}},
+		Options: options.Index().SetName("interest_email_unique").SetUnique(true),
+	})
+	if err != nil {
+		return fmt.Errorf("create interest indexes: %w", err)
 	}
 
 	_, err = s.journalTrades.Indexes().CreateMany(ctx, []mongodriver.IndexModel{

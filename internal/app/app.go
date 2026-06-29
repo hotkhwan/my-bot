@@ -15,6 +15,7 @@ import (
 	"bottrade/internal/config"
 	"bottrade/internal/decimal"
 	binanceexec "bottrade/internal/exchange/binance"
+	"bottrade/internal/interest"
 	"bottrade/internal/journal"
 	"bottrade/internal/logging"
 	"bottrade/internal/marketdata"
@@ -349,13 +350,20 @@ func (a *App) serverOptions(signalStore signals.SignalStore) []api.Option {
 	opts := []api.Option{}
 
 	var repo users.Repository = users.NewMemoryRepository()
+	var interestRepo interest.Repository = interest.NewMemoryRepository()
 	if store, ok := signalStore.(*mongostore.Store); ok {
 		repo = store.Users()
+		interestRepo = store.Interest()
 	}
 	if userService, err := users.NewService(repo); err == nil {
 		opts = append(opts, api.WithUsers(userService))
 	} else {
 		a.logger.Warn("user service unavailable; registration disabled", "error", err)
+	}
+	if interestService, err := interest.NewService(interestRepo); err == nil {
+		opts = append(opts, api.WithInterest(interestService))
+	} else {
+		a.logger.Warn("interest signup unavailable", "error", err)
 	}
 
 	if store, ok := signalStore.(*mongostore.Store); ok {

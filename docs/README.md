@@ -3,6 +3,7 @@
 Team source of truth for principles that outlive any single conversation. Read before adding
 user-facing or trading features.
 
+- [AGENT_MEMORY.md](AGENT_MEMORY.md) — persistent release, merge, fee, and collaboration decisions.
 - [legal/thai-sec-design-principles.md](legal/thai-sec-design-principles.md) — **Legal by
   Design**: forbidden language, what we must do, marketing wording, and the **Legal Gate**
   (5 questions every feature PR must answer).
