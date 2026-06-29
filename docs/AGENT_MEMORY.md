@@ -18,5 +18,7 @@ Persistent collaboration rules for ANNY:
   VIP tier and discounts.
 - Public visitors do not self-register from the dashboard. They can submit an
   interest email, stored durably in MongoDB `interest_signups`.
+- Early access flow is Interest → admin sends invite → account registration →
+  member waits for final admin approval while `FREE_SUB_OPEN=false`.
 - Preserve user changes, including the plan documents moved into `docs/plan`.
 - Use `.codex/skills/my-bot-dev/SKILL.md` as the Codex-native project workflow.

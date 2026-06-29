@@ -238,6 +238,13 @@ func (s *Store) ensureIndexes(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create interest indexes: %w", err)
 	}
+	_, err = s.interest.Indexes().CreateOne(ctx, mongodriver.IndexModel{
+		Keys:    bson.D{{Key: "invite_hash", Value: 1}},
+		Options: options.Index().SetName("interest_invite_hash_unique").SetUnique(true).SetSparse(true),
+	})
+	if err != nil {
+		return fmt.Errorf("create interest invite index: %w", err)
+	}
 
 	_, err = s.journalTrades.Indexes().CreateMany(ctx, []mongodriver.IndexModel{
 		{

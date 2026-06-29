@@ -41,6 +41,7 @@ type Config struct {
 	Stripe      StripeConfig
 	S3          S3Config
 	Auth        AuthConfig
+	Email       EmailConfig
 }
 
 type AppConfig struct {
@@ -184,6 +185,11 @@ type AuthConfig struct {
 	TokenTTL    time.Duration
 }
 
+type EmailConfig struct {
+	ResendAPIKey string
+	From         string
+}
+
 type ValidationError struct {
 	Problems []string
 }
@@ -220,6 +226,7 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.App.Env = reader.string("APP_ENV", cfg.App.Env)
 	cfg.App.LogLevel = strings.ToLower(reader.string("LOG_LEVEL", cfg.App.LogLevel))
 	cfg.App.AccessOpen = reader.bool("ACCESS_OPEN", cfg.App.AccessOpen)
+	cfg.App.AccessOpen = reader.bool("FREE_SUB_OPEN", cfg.App.AccessOpen)
 	cfg.App.PrivateBeta = reader.bool("PRIVATE_BETA", cfg.App.PrivateBeta)
 	cfg.App.DryRun = reader.bool("DRY_RUN", cfg.App.DryRun)
 	cfg.App.RealTradingEnabled = reader.bool("REAL_TRADING_ENABLED", cfg.App.RealTradingEnabled)
@@ -325,6 +332,8 @@ func LoadFromLookup(lookup LookupFunc) (Config, error) {
 	cfg.Auth.Enabled = len(cfg.Auth.EncryptionKey) > 0
 	cfg.Auth.TokenSecret = reader.base64("AUTH_JWT_SECRET")
 	cfg.Auth.TokenTTL = reader.seconds("AUTH_JWT_TTL_SECONDS", 24*time.Hour)
+	cfg.Email.ResendAPIKey = reader.string("RESEND_API_KEY", "")
+	cfg.Email.From = reader.string("EMAIL_FROM", "")
 
 	validate(cfg, &reader.problems)
 

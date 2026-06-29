@@ -40,6 +40,7 @@ func TestLoginIssuesSessionToken(t *testing.T) {
 	userSvc, _ := users.NewService(users.NewMemoryRepository())
 	tk := testTokenizer(t)
 	server := NewServer(testConfig(), nil, testLogger(), WithUsers(userSvc), WithTokenizer(tk))
+	_, _ = userSvc.Register(context.Background(), "alice", "supersecret")
 
 	post := func(path, payload string) []byte {
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(payload))
@@ -53,7 +54,6 @@ func TestLoginIssuesSessionToken(t *testing.T) {
 		return body
 	}
 
-	post("/api/register", `{"username":"alice","password":"supersecret"}`)
 	body := post("/api/login", `{"username":"alice","password":"supersecret"}`)
 
 	var out map[string]any
@@ -441,12 +441,15 @@ func TestWebhookBodyLimit(t *testing.T) {
 	}
 }
 
-func TestRegisterAndLogin(t *testing.T) {
+func TestExistingAccountLogin(t *testing.T) {
 	userSvc, err := users.NewService(users.NewMemoryRepository())
 	if err != nil {
 		t.Fatalf("users.NewService: %v", err)
 	}
 	server := NewServer(testConfig(), nil, testLogger(), WithUsers(userSvc))
+	if _, err := userSvc.Register(context.Background(), "alice", "supersecret"); err != nil {
+		t.Fatal(err)
+	}
 
 	post := func(path, payload string) (int, []byte) {
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(payload))
@@ -460,12 +463,6 @@ func TestRegisterAndLogin(t *testing.T) {
 		return resp.StatusCode, body
 	}
 
-	if status, _ := post("/api/register", `{"username":"alice","password":"supersecret"}`); status != http.StatusCreated {
-		t.Fatalf("register status = %d, want 201", status)
-	}
-	if status, _ := post("/api/register", `{"username":"alice","password":"supersecret"}`); status != http.StatusConflict {
-		t.Fatalf("duplicate register status = %d, want 409", status)
-	}
 	if status, body := post("/api/login", `{"username":"alice","password":"supersecret"}`); status != http.StatusOK {
 		t.Fatalf("login status = %d (%s), want 200", status, body)
 	}
@@ -627,7 +624,7 @@ func TestReportEndpoint(t *testing.T) {
 	}
 }
 
-func TestRegisterDisabledWithoutUserService(t *testing.T) {
+func TestPublicRegisterRouteIsDisabled(t *testing.T) {
 	server := NewServer(testConfig(), nil, testLogger())
 	req := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewBufferString(`{"username":"a","password":"b"}`))
 	resp, err := server.App().Test(req)
@@ -635,8 +632,8 @@ func TestRegisterDisabledWithoutUserService(t *testing.T) {
 		t.Fatalf("Test: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501 when users disabled", resp.StatusCode)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
 	}
 }
 

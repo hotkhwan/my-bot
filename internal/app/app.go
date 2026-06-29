@@ -14,6 +14,7 @@ import (
 	"bottrade/internal/campaignexec"
 	"bottrade/internal/config"
 	"bottrade/internal/decimal"
+	appemail "bottrade/internal/email"
 	binanceexec "bottrade/internal/exchange/binance"
 	"bottrade/internal/interest"
 	"bottrade/internal/journal"
@@ -364,6 +365,9 @@ func (a *App) serverOptions(signalStore signals.SignalStore) []api.Option {
 		opts = append(opts, api.WithInterest(interestService))
 	} else {
 		a.logger.Warn("interest signup unavailable", "error", err)
+	}
+	if sender := appemail.NewResendSender(a.cfg.Email.ResendAPIKey, a.cfg.Email.From); sender != nil {
+		opts = append(opts, api.WithEmail(sender))
 	}
 
 	if store, ok := signalStore.(*mongostore.Store); ok {

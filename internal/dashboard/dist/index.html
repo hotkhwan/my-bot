@@ -110,12 +110,12 @@
       .row:last-child { border-bottom: 0; }
       .row strong { font-family: var(--font-mono); font-weight: 600; }
       label { display: block; font-size: 0.82rem; margin: 0.6rem 0 0.25rem; color: var(--muted); }
-      input, select {
+      input, select, textarea {
         width: 100%; padding: 0.55rem 0.65rem; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 0.6rem;
         background: rgba(5, 8, 22, 0.55); color: var(--text); font-family: var(--font-body); font-size: 0.95rem;
         transition: border-color 0.18s, box-shadow 0.18s;
       }
-      input:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.16); }
+      input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.16); }
       input[inputmode="decimal"], input[inputmode="numeric"], #t-sym, #g-symbol, #cmd, #coinSearch { font-family: var(--font-mono); }
       .actions { display: flex; gap: 0.5rem; margin-top: 0.9rem; }
       button { padding: 0.6rem; border: 0; border-radius: 0.65rem; cursor: pointer; font-weight: 700; font-family: var(--font-body); color: var(--text); }
@@ -410,6 +410,14 @@
             <button class="primary login-submit" id="login" type="button">Log in</button>
             <div class="msg" id="msg"></div>
           </div>
+          <div id="invite-form" class="hidden">
+            <strong>Create your invited account</strong>
+            <p style="margin:0.35rem 0 0.75rem">After signup, your member access will wait for admin approval.</p>
+            <label for="invite-username">Username</label><input id="invite-username" autocomplete="username" />
+            <label for="invite-password">Password</label><input id="invite-password" type="password" autocomplete="new-password" />
+            <button class="primary login-submit" id="invite-register" type="button">Create account</button>
+            <div class="msg" id="invite-msg"></div>
+          </div>
           <form class="interest-box" id="interest-form">
             <strong>Interested in early access?</strong>
             <p>Leave your email. We’ll only use it for ANNY access and product updates.</p>
@@ -417,6 +425,7 @@
               <input id="interest-email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" required />
               <button class="ghost" id="interest-submit" type="submit">Keep me posted</button>
             </div>
+            <textarea id="interest-reason" rows="3" maxlength="1000" placeholder="Optional: What interests you about ANNY?" style="margin-top:0.55rem;resize:vertical"></textarea>
             <div class="msg" id="interest-msg" role="status" aria-live="polite"></div>
           </form>
         </div>
@@ -572,6 +581,9 @@
           <strong>🛡 Members</strong>
           <p style="margin:0.3rem 0 0.6rem">Everyone who signed in — approve, promote, or revoke. Copy a <b>tg:id</b> below for the manual forms.</p>
           <div id="admin-approvals">Loading…</div>
+          <strong style="display:block;margin-top:1rem">Early-access interests</strong>
+          <p style="margin:0.3rem 0 0.6rem">Approve an interest to send a signup link. New accounts still wait in Members for final approval.</p>
+          <div id="admin-interests">Loading…</div>
           <label for="tier-subject" style="margin-top:0.7rem">Set a member's tier</label>
           <div class="cmdrow">
             <input id="tier-subject" placeholder="subject (e.g. tg:468848033)" autocomplete="off" />
@@ -709,7 +721,7 @@
         const ok = unlocked();
         document.querySelectorAll("#nav button").forEach((b) => { if (b.dataset.view !== "home") b.classList.toggle("hidden", !ok); });
         $("admin-card").classList.toggle("hidden", !(me && me.admin));
-        if (me && me.admin) loadAdminPending();
+        if (me && me.admin) { loadAdminPending(); loadAdminInterests(); }
         const btn = $("home-start");
         if (ok) { btn.textContent = "Start Trading →"; btn.disabled = false; btn.onclick = () => navigate("orders"); }
         else if (me && me.status === "requested") { btn.textContent = "⏳ Access requested"; btn.disabled = true; btn.onclick = null; }
@@ -749,6 +761,22 @@
       async function adminAction(path, body) {
         await fetch(path, { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
         loadAdminPending();
+      }
+      async function loadAdminInterests() {
+        const box = $("admin-interests"); if (!box) return;
+        try {
+          const d = await (await fetch("/api/admin/interests", { headers: authHeaders() })).json();
+          const list = d.interests || [];
+          box.innerHTML = list.length ? list.map((r) => `<div class="member"><div><b>${escapeHtml(r.email)}</b><br><span style="color:var(--muted);font-size:0.76rem">${escapeHtml(r.reason || "No reason provided")} · ${escapeHtml(r.status || "new")}</span></div>${r.status !== "registered" ? `<button class="primary mini" data-invite="${escapeHtml(r.email)}">Send invite</button>` : ""}</div>`).join("") : "<p style='font-size:0.85rem;color:var(--muted)'>No interests yet.</p>";
+          box.querySelectorAll("[data-invite]").forEach((b) => b.onclick = async () => {
+            b.disabled = true;
+            const r = await fetch("/api/admin/interests/invite", { method:"POST", headers:authHeaders(), body:JSON.stringify({email:b.dataset.invite}) });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok || !out.sent) showToast(out.error || ("Email is not configured. Copy link: " + (out.invite_url || "")));
+            else showToast("Invitation sent.");
+            loadAdminInterests();
+          });
+        } catch (_) { box.textContent = "Could not load interests."; }
       }
       function renderVersion() {
         const box = $("brand-ver"); if (!box) return;
@@ -955,11 +983,12 @@
           const r = await fetch("/api/interest", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: $("interest-email").value, source: "login" }),
+            body: JSON.stringify({ email: $("interest-email").value, reason: $("interest-reason").value, source: "login" }),
           });
           const d = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(d.error || "Could not save your email");
           $("interest-email").value = "";
+          $("interest-reason").value = "";
           msg.textContent = "You’re on the list. We’ll keep you posted.";
           msg.style.color = "var(--profit)";
         } catch (err) {
@@ -969,6 +998,21 @@
           button.disabled = false;
         }
       });
+
+      const inviteToken = new URLSearchParams(location.search).get("invite") || "";
+      if (inviteToken) {
+        $("pwForm").classList.add("hidden");
+        $("tgLogin").classList.add("hidden");
+        $("interest-form").classList.add("hidden");
+        $("invite-form").classList.remove("hidden");
+      }
+      $("invite-register").onclick = async () => {
+        const msg = $("invite-msg");
+        const r = await fetch("/api/invite-register", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:inviteToken, username:$("invite-username").value, password:$("invite-password").value}) });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.token) { localStorage.setItem("token", d.token); history.replaceState({}, "", "/home"); onAuthed({name:d.username}); }
+        else { msg.textContent = d.error || "Could not create account"; msg.style.color = "var(--loss)"; }
+      };
 
       // ---- auth: Telegram widget ----
       window.onTelegramAuth = async (user) => {
@@ -980,6 +1024,7 @@
         } catch (e) { $("tgMsg").textContent = "Network error"; }
       };
       fetch("/api/auth-config").then((r) => r.json()).then((cfg) => {
+        if (inviteToken) return;
         if (!cfg.telegram_login_enabled || !cfg.telegram_bot_username) return;
         $("pwBox").appendChild($("pwForm"));
         $("tgLogin").classList.remove("hidden");
