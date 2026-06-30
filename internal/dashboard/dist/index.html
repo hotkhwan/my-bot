@@ -203,10 +203,13 @@
       .bcard-tag.long { color: var(--profit); } .bcard-tag.short { color: var(--loss); }
       .bcard-tag.ai { color: var(--primary); }
       .bcard-net { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.6px; color: #E9B500; background: rgba(240, 185, 11, 0.12); border: 1px solid rgba(240, 185, 11, 0.4); border-radius: 0.4rem; padding: 0.15rem 0.4rem; flex: 0 0 auto; }
+      .bcard.plan-edit { border-color: rgba(246, 70, 93, 0.38); background: linear-gradient(180deg, rgba(45, 16, 26, 0.48), rgba(5, 8, 22, 0.62)); }
+      .bcard.plan-edit .bcard-net { color: #F6465D; background: rgba(246, 70, 93, 0.12); border-color: rgba(246, 70, 93, 0.42); }
       .bcard-mid { display: flex; align-items: flex-end; justify-content: space-between; gap: 0.6rem; margin: 0.85rem 0 0.1rem; }
       .bcard-lbl { font-size: 0.72rem; color: var(--muted); margin-bottom: 0.1rem; }
       .bcard-num { font-size: 2.1rem; font-weight: 700; line-height: 1.05; }
       .bcard-num.up { color: var(--profit); } .bcard-num.down { color: var(--loss); }
+      .bcard-num.status { color: var(--text); font-size: 1.28rem; line-height: 1.22; overflow-wrap: anywhere; }
       .bcard-roi { font-size: 0.82rem; margin-top: 0.15rem; }
       .bcard-roi.up { color: var(--profit); } .bcard-roi.down { color: var(--loss); }
       .bcard-spark { flex: 0 0 auto; width: 48%; max-width: 14rem; height: 4.4rem; align-self: flex-end; }
@@ -472,17 +475,17 @@
             <div class="msg" id="g-msg"></div>
           </div>
           <div id="g-card" class="bcard hidden">
-            <div class="flow-step"><span class="flow-no">2</span><strong>Review paper assessment</strong></div>
+            <div class="flow-step"><span class="flow-no">2</span><strong id="g-card-title">Review paper assessment</strong></div>
             <div class="bcard-top">
               <div>
                 <div class="bcard-sym" id="bc-sym">—</div>
                 <div class="bcard-tags" id="bc-tags"></div>
               </div>
-              <span class="bcard-net" title="Paper run — simulated on real Binance candles. No real orders, no real money. Just proof of how the strategy would have done.">PAPER ⓘ</span>
+              <span class="bcard-net" id="bc-mode" title="Paper run — simulated on real Binance candles. No real orders, no real money. Just proof of how the strategy would have done.">PAPER ⓘ</span>
             </div>
             <div class="bcard-mid">
               <div>
-                <div class="bcard-lbl">Estimated net PnL (USDT)</div>
+                <div class="bcard-lbl" id="bc-pnl-label">Estimated net PnL (USDT)</div>
                 <div class="bcard-num mono" id="bc-pnl">+0.00</div>
                 <div class="bcard-roi mono" id="bc-roi"></div>
               </div>
@@ -1322,6 +1325,9 @@
       function canLaunchGoal(st) {
         return !!(st && !goalNeedsEdit(st) && (st.actionable === true || Number(st.trades || 0) > 0) && st.verdict === "target_reached");
       }
+      function planEditReason(st) {
+        return (st && st.blocked_reason) || "No actionable setup in this validation window";
+      }
       function verdictText(v, st) {
         if (st && st.blocked_reason) return "Edit plan: " + st.blocked_reason;
         if ((st && st.strategy || "").startsWith("anny_basic") && Number((st && st.trades) || 0) === 0) return "Edit plan: No CDC/QQE setup in this validation window";
@@ -1343,6 +1349,7 @@
       function renderGoalResult(d, request) {
         const st = d.stats || {};
         lastGoalStats = st;
+        const needsEdit = goalNeedsEdit(st);
         const pnl = Number(st.realized_pnl || 0), up = pnl >= 0;
         const cap = Number(st.capital || 100) || 100;
         const roi = (pnl / cap) * 100;
@@ -1351,10 +1358,34 @@
         const tags = [`<span class="bcard-tag">${escapeHtml(st.strategy || "")}</span>`, `<span class="bcard-tag">${escapeHtml(shownDuration)} plan</span>`, `<span class="bcard-tag">${escapeHtml(st.interval || "")} execution</span>`];
         if (st.used_ai) tags.push('<span class="bcard-tag ai">· AI</span>');
         $("bc-tags").innerHTML = tags.join(" ");
-        $("bc-pnl").textContent = (up ? "+" : "") + (Math.round(pnl * 100) / 100); $("bc-pnl").className = "bcard-num mono " + (up ? "up" : "down");
-        $("bc-roi").textContent = (up ? "+" : "") + (Math.round(roi * 100) / 100) + "% ROI"; $("bc-roi").className = "bcard-roi mono " + (up ? "up" : "down");
-        $("bc-spark").innerHTML = (d.curve && d.curve.length) ? bcardSpark(d.curve.map(Number)) : "";
-        const cells = [
+        $("g-card").classList.toggle("plan-edit", needsEdit);
+        $("g-card-title").textContent = needsEdit ? "Edit plan before mission" : "Review paper assessment";
+        $("bc-mode").textContent = needsEdit ? "EDIT PLAN" : "PAPER ⓘ";
+        $("bc-mode").title = needsEdit
+          ? "No actionable setup was found in this validation window. Change the plan before launching."
+          : "Paper run — simulated on real Binance candles. No real orders, no real money. Just proof of how the strategy would have done.";
+        $("bc-pnl-label").textContent = needsEdit ? "Assessment status" : "Estimated net PnL (USDT)";
+        if (needsEdit) {
+          $("bc-pnl").textContent = "Needs edit";
+          $("bc-pnl").className = "bcard-num mono status";
+          $("bc-roi").textContent = "No paper result to launch";
+          $("bc-roi").className = "bcard-roi mono";
+          $("bc-spark").innerHTML = "";
+        } else {
+          $("bc-pnl").textContent = (up ? "+" : "") + (Math.round(pnl * 100) / 100); $("bc-pnl").className = "bcard-num mono " + (up ? "up" : "down");
+          $("bc-roi").textContent = (up ? "+" : "") + (Math.round(roi * 100) / 100) + "% ROI"; $("bc-roi").className = "bcard-roi mono " + (up ? "up" : "down");
+          $("bc-spark").innerHTML = (d.curve && d.curve.length) ? bcardSpark(d.curve.map(Number)) : "";
+        }
+        const cells = needsEdit ? [
+          ["Est. entries", String(st.estimated_entries || "—"), ""],
+          ["Trades found", String(st.trades || 0), "down"],
+          ["Validation", st.validation_window || st.duration || "—", ""],
+          ["Plan action", "Edit plan", "down"],
+          ["Capital", cap + " USDT", ""],
+          ["Target", (st.profit_target || "0") + " USDT", ""],
+          ["Capital risk", (st.risk_pct || 0) + "%", ""],
+          ["Leverage use", (st.leverage_use_pct || 0) + "%", ""],
+        ] : [
           ["Win rate", (Math.round((st.win_rate_pct || 0) * 10) / 10) + "%", ""],
           ["Trades", String(st.trades || 0), ""],
           ["Est. entries", String(st.estimated_entries || "—"), ""],
@@ -1373,9 +1404,9 @@
         const launchable = canLaunchGoal(st);
         $("g-live").classList.toggle("hidden", !launchable);
         $("g-live").disabled = !launchable;
-        if (goalNeedsEdit(st)) {
+        if (needsEdit) {
           const aiNote = d.ai ? " " + d.ai : "";
-          goalMsg((st.blocked_reason || "No actionable setup in this validation window") + ". Edit the plan before Launch & confirm." + aiNote, false);
+          goalMsg(planEditReason(st) + ". Edit the plan before Launch & confirm." + aiNote, false);
           $("g-confirm-out").classList.add("hidden");
           $("g-confirm-actions").classList.add("hidden");
           pendingMission = null; missionConfirmId = null;
@@ -1385,7 +1416,7 @@
           ? trades.map((t) => `<div class="trade"><span class="tside ${t.side === "long" ? "up" : "down"}">${escapeHtml(t.side)}</span><span style="color:var(--muted)">${escapeHtml(t.outcome)}</span><span class="tpnl ${Number(t.pnl) >= 0 ? "up" : "down"}">${fmtPnl(t.pnl)}</span></div>`).join("")
           : "<p style='font-size:0.85rem'>No trades.</p>";
         $("g-tradeswrap").classList.toggle("hidden", trades.length === 0);
-        if (d.ai && !goalNeedsEdit(st)) goalMsg(d.ai, true);
+        if (d.ai && !needsEdit) goalMsg(d.ai, true);
       }
       async function runGoal() {
         goalMsg("Running on real candles…", true);
@@ -1414,7 +1445,7 @@
       $("g-edit").onclick = () => { $("g-profit").focus(); $("view-orders").scrollIntoView({ behavior:"smooth", block:"start" }); };
       async function runLiveMission() {
         if (!canLaunchGoal(lastGoalStats)) {
-          goalMsg(((lastGoalStats && lastGoalStats.blocked_reason) || "Paper assessment is not launch-ready") + ". Edit the plan and assess again.", false);
+          goalMsg((lastGoalStats ? planEditReason(lastGoalStats) : "Paper assessment is not launch-ready") + ". Edit the plan and assess again.", false);
           $("g-edit").focus();
           return;
         }

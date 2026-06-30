@@ -397,8 +397,8 @@ func goalSummaryText(goal campaign.Goal, r campaign.PaperResult, stats GoalRun, 
 		fmt.Fprintf(&b, "%s\n", aiNote)
 	}
 	if stats.NeedsPlanEdit {
-		fmt.Fprintf(&b, "\n📊 Paper assessment on real %s candles: edit plan\n", r.Symbol)
-		fmt.Fprintf(&b, "%s. Estimated entries needed by goal math: %d. Try a longer validation window, another duration, another symbol, or another strategy.",
+		fmt.Fprintf(&b, "\n📊 Plan assessment on real %s candles: edit plan\n", r.Symbol)
+		fmt.Fprintf(&b, "%s. No paper result is launchable from this window. Estimated entries needed by goal math: %d. Try a longer validation window, another duration, another symbol, or another strategy.",
 			stats.BlockedReason, stats.EstimatedEntries)
 		return b.String()
 	}

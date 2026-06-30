@@ -45,6 +45,32 @@ test("login → goal paper run shows real stats", async ({ page }) => {
   await expect(page.locator("#g-history")).toContainText("BTCUSDT");
 });
 
+test("ANNY Basic no-setup asks for plan edit, not a zero paper result", async ({ page }) => {
+  await registerAndLogin(page);
+  await gotoTrade(page);
+
+  await page.fill("#g-profit", "10");
+  await page.fill("#g-capital", "100");
+  await page.fill("#g-risk", "60");
+  await page.selectOption("#g-symbol", "BTC");
+  await page.selectOption("#g-strategy", "anny_basic");
+  await page.selectOption("#g-duration", "15m");
+  await page.click("#g-run");
+
+  const card = page.locator("#g-card");
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("#g-card-title")).toContainText("Edit plan");
+  await expect(page.locator("#bc-mode")).toContainText("EDIT PLAN");
+  await expect(page.locator("#bc-pnl")).toContainText("Needs edit");
+  await expect(page.locator("#bc-roi")).toContainText("No paper result");
+  await expect(card).toContainText("Est. entries");
+  await expect(card).toContainText("Trades found");
+  await expect(card).toContainText("No CDC/QQE setup");
+  await expect(card).not.toContainText("+0% ROI");
+  await expect(page.locator("#bc-spark svg")).toHaveCount(0);
+  await expect(page.locator("#g-live")).toBeHidden();
+});
+
 test("trade tab shows the goal form and pages navigate", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
