@@ -74,6 +74,10 @@ test("ANNY Basic no-setup asks for plan edit, not a zero paper result", async ({
   await expect(card).not.toContainText("+0% ROI");
   await expect(page.locator("#bc-spark svg")).toHaveCount(0);
   await expect(page.locator("#g-live")).toBeHidden();
+  await expect(page.locator("#g-try-auto")).toBeVisible();
+  await expect(page.locator("#g-try-rsi")).toBeVisible();
+  await page.click("#g-try-auto");
+  await expect(page.locator("#g-strategy")).toHaveValue("auto");
 });
 
 test("trade tab shows the goal form and pages navigate", async ({ page }) => {

@@ -59,6 +59,9 @@ filter. Market-data failures must surface as API errors, not as no-setup
 results. A no-setup assessment must show entries needed by goal math,
 launchable setups found, top blocker, and the next edit hint before Stage 3 /
 mission launch is allowed.
+The dashboard may offer one-tap fallback paper reassessment with Auto or RSI,
+but that changes the strategy under assessment; it must not make an ANNY Basic
+no-setup result launchable.
 
 ## Delivery Gates
 

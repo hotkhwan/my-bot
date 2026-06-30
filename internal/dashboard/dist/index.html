@@ -290,7 +290,7 @@
       .hidden { display: none !important; }
       .flow-step { display:flex; align-items:center; gap:0.55rem; margin-bottom:0.35rem; }
       .flow-no { display:inline-flex; align-items:center; justify-content:center; width:1.55rem; height:1.55rem; border-radius:50%; background:rgba(0,245,255,.12); border:1px solid var(--card-border); color:var(--primary); font:700 .75rem var(--font-mono); }
-      .mission-actions { display:flex; gap:.55rem; margin-top:.8rem; }
+      .mission-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(7rem,1fr)); gap:.55rem; margin-top:.8rem; }
       .position-card { border:1px solid var(--card-border); border-radius:.8rem; padding:.8rem; margin-top:.65rem; background:rgba(5,8,22,.45); }
       .position-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.65rem; margin:.65rem 0; }
       .position-grid .pk { color:var(--muted); font-size:.68rem; }
@@ -496,6 +496,8 @@
             <div id="g-review-actions" class="mission-actions hidden">
               <button class="primary" id="g-live" type="button">Launch testnet mission →</button>
               <button class="ghost" id="g-edit" type="button">Edit plan</button>
+              <button class="ghost hidden" id="g-try-auto" type="button">Try Auto</button>
+              <button class="ghost hidden" id="g-try-rsi" type="button">Try RSI</button>
             </div>
           </div>
           <details id="g-tradeswrap" class="hidden" style="margin-top:0.7rem"><summary style="cursor:pointer;color:var(--muted);font-size:0.85rem">Trades</summary><div id="g-trades"></div></details>
@@ -1411,8 +1413,11 @@
         $("g-card").classList.remove("hidden");
         $("g-review-actions").classList.remove("hidden");
         const launchable = canLaunchGoal(st);
+        const fallbackable = needsEdit && String(st.strategy || "").startsWith("anny_basic");
         $("g-live").classList.toggle("hidden", !launchable);
         $("g-live").disabled = !launchable;
+        $("g-try-auto").classList.toggle("hidden", !fallbackable);
+        $("g-try-rsi").classList.toggle("hidden", !fallbackable);
         if (needsEdit) {
           const aiNote = d.ai ? " " + d.ai : "";
           const hintNote = planHint(st) ? " Next: " + planHint(st) : "";
@@ -1433,6 +1438,8 @@
         $("g-run").disabled = true;
         $("g-review-actions").classList.add("hidden");
         $("g-live").classList.add("hidden");
+        $("g-try-auto").classList.add("hidden");
+        $("g-try-rsi").classList.add("hidden");
         $("g-confirm-out").classList.add("hidden");
         $("g-confirm-actions").classList.add("hidden");
         pendingMission = null; missionConfirmId = null; lastGoalStats = null;
@@ -1453,6 +1460,8 @@
       }
       $("g-run").onclick = runGoal;
       $("g-edit").onclick = () => { $("g-profit").focus(); $("view-orders").scrollIntoView({ behavior:"smooth", block:"start" }); };
+      $("g-try-auto").onclick = () => { $("g-strategy").value = "auto"; runGoal(); };
+      $("g-try-rsi").onclick = () => { $("g-strategy").value = "rsi"; runGoal(); };
       async function runLiveMission() {
         if (!canLaunchGoal(lastGoalStats)) {
           const hintNote = lastGoalStats && planHint(lastGoalStats) ? " Next: " + planHint(lastGoalStats) : "";
