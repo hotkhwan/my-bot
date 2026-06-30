@@ -10,6 +10,8 @@ user-facing or trading features.
 - [architecture/cloudflare-edge-policy.md](architecture/cloudflare-edge-policy.md) - **Cloudflare
   edge policy**: DNS, SSL/TLS, edge security, cache, traffic policy, and proof-page
   exposure rules for `joinanny.com`.
+- [contract/README.md](contract/README.md) - **Feature contracts**: feature ownership,
+  next work, validation gates, and agent/skill routing for future sessions.
 - [architecture/subscription-founder.md](architecture/subscription-founder.md) — **Launch / Founder
   plan**: PRIVATE_BETA invite-only; Founder Badge for life but Commander time-boxed (free until GA
   → Captain lifetime); `Subscription` schema; Mission Zero caps (32/64/128).
@@ -27,6 +29,7 @@ Two gates run before merge on user-facing/trading features: the **Security Gate*
 
 Strategy and roadmap:
 
+- [plan/README.md](plan/README.md) - active vs done-reference planning index.
 - [strategy/anny-basic-v1.2.md](strategy/anny-basic-v1.2.md) - first versioned
   ANNY strategy model and its delivery gates.
 - [strategy/success-model-anny-basic.md](strategy/success-model-anny-basic.md) - Mission Zero

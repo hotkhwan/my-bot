@@ -8,6 +8,8 @@ does not guarantee profit.
 
 ### Architecture
 
+- [Feature contracts](docs/contract/README.md) - handoff map for feature
+  ownership, next work, validation, and agent routing.
 - [Cloudflare edge policy](docs/architecture/cloudflare-edge-policy.md) - DNS,
   SSL/TLS, edge security, cache, and traffic policy for `joinanny.com`.
 - [Secret model architecture](docs/architecture/secret-model.md) - transparent
@@ -38,5 +40,9 @@ does not guarantee profit.
   strategy model and delivery gates.
 - [ANNY Basic success model](docs/strategy/success-model-anny-basic.md) -
   Mission Zero success criteria for risk, execution, and transparency.
+
+### Plan
+
+- [Plan index](docs/plan/README.md) - active vs done-reference planning files.
 
 See [docs/README.md](docs/README.md) for the source-of-truth docs index.

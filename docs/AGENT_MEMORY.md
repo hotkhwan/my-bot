@@ -33,3 +33,6 @@ Persistent collaboration rules for ANNY:
   retain the lead with `waitlisted` status, and contact them again at launch.
 - Preserve user changes, including the plan documents moved into `docs/plan`.
 - Use `.codex/skills/my-bot-dev/SKILL.md` as the Codex-native project workflow.
+- After every commit or deploy, report the app version from
+  `internal/version/version.go` plus the commit hash so testers know exactly
+  which build is live.
