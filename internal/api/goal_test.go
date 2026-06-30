@@ -12,6 +12,7 @@ import (
 
 	"bottrade/internal/auth"
 	"bottrade/internal/campaign"
+	"bottrade/internal/decimal"
 	"bottrade/internal/signals"
 )
 
@@ -302,5 +303,81 @@ func TestAIBiasLowConfidenceUsesBothSides(t *testing.T) {
 	}
 	if !strings.Contains(note, "confidence 35% is low") {
 		t.Fatalf("note = %q, want low-confidence explanation", note)
+	}
+}
+
+// TestApplyLeverageSizing checks the leverage slider scales the per-trade bracket
+// while preserving the 2:1 reward:risk: 25% reproduces the legacy 1%/2% sizing,
+// 50% doubles it, 100% quadruples it.
+func TestApplyLeverageSizing(t *testing.T) {
+	base, err := campaign.ParseGoal("goal profit 10 capital 100 risk 70")
+	if err != nil {
+		t.Fatalf("ParseGoal: %v", err)
+	}
+	eq := func(got decimal.Decimal, want string) bool {
+		w, _ := decimal.Parse(want)
+		return got.Cmp(w) == 0
+	}
+	cases := []struct {
+		lev                  int
+		wantRisk, wantReward string
+	}{
+		{25, "1", "2"},
+		{50, "2", "4"},
+		{100, "4", "8"},
+	}
+	for _, tc := range cases {
+		g := applyLeverageSizing(base, tc.lev)
+		if !eq(g.RiskPerTradeUSDT, tc.wantRisk) {
+			t.Errorf("lev %d: risk/trade = %s, want %s", tc.lev, g.RiskPerTradeUSDT.String(), tc.wantRisk)
+		}
+		if !eq(g.RewardPerTradeUSDT, tc.wantReward) {
+			t.Errorf("lev %d: reward/trade = %s, want %s", tc.lev, g.RewardPerTradeUSDT.String(), tc.wantReward)
+		}
+	}
+}
+
+// TestGoalRunUnlimitedAndEdgeStats verifies the open-ended duration runs to a
+// target/stop verdict and that the response exposes the RR-adjusted edge fields
+// the launch gate is built on (reward_risk, expectancy_per_trade, launchable).
+func TestGoalRunUnlimitedAndEdgeStats(t *testing.T) {
+	server, token := goalServer(t)
+
+	code, out := postGoal(t, server, token, map[string]any{
+		"profit": 5, "capital": 100, "capital_risk_pct": 30, "leverage_use_pct": 50,
+		"symbol": "BTC", "strategy": "ema", "duration": "unlimited",
+	})
+	if code != http.StatusOK {
+		t.Fatalf("unlimited goal status = %d (%v)", code, out)
+	}
+	stats, _ := out["stats"].(map[string]any)
+	if stats == nil {
+		t.Fatalf("no stats in response: %v", out)
+	}
+	if stats["duration"] != "unlimited" {
+		t.Fatalf("duration = %v, want unlimited", stats["duration"])
+	}
+	if stats["validation_window"] != "until target or stop" {
+		t.Fatalf("validation_window = %v, want until target or stop", stats["validation_window"])
+	}
+	if rr, _ := stats["reward_risk"].(string); !strings.HasPrefix(rr, "2") {
+		t.Fatalf("reward_risk = %v, want 2:1", stats["reward_risk"])
+	}
+	if _, ok := stats["expectancy_per_trade"].(string); !ok {
+		t.Fatalf("expectancy_per_trade missing from stats: %v", stats)
+	}
+	launchable, ok := stats["launchable"].(bool)
+	if !ok {
+		t.Fatalf("launchable missing from stats: %v", stats)
+	}
+	// The stub is a steady uptrend: many winning trades, so this run clears the
+	// min-sample + positive-expectancy gate.
+	if trades, _ := stats["trades"].(float64); trades >= float64(minLaunchTrades) {
+		if pnl, _ := stats["realized_pnl"].(string); strings.HasPrefix(pnl, "-") {
+			t.Fatalf("uptrend run should be net positive, pnl = %v", pnl)
+		}
+		if !launchable {
+			t.Fatalf("uptrend run with %v trades should be launchable", stats["trades"])
+		}
 	}
 }
