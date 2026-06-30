@@ -1316,7 +1316,7 @@
       }
       function fmtPnl(v) { const n = Number(v) || 0; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100); }
       function verdictText(v) {
-        return ({ target_reached: "🎯 Target reached", max_drawdown: "🛑 Stopped: capital risk limit", max_trades: "⏹ Stopped: max trades", continue: "Plan window completed" })[v] || v || "";
+        return ({ target_reached: "🎯 Target reached", max_drawdown: "🛑 Stopped: capital risk limit", max_trades: "⏹ Stopped: max trades", continue: "Target not reached in this window" })[v] || v || "";
       }
       // bcardSpark draws a Binance-style area sparkline (line + soft fill), green
       // when the run ends in profit, red otherwise.
@@ -1347,6 +1347,8 @@
           ["Win rate", (Math.round((st.win_rate_pct || 0) * 10) / 10) + "%", ""],
           ["Trades", String(st.trades || 0), ""],
           ["W / L", (st.wins || 0) + " / " + (st.losses || 0), ""],
+          ["Target hit", st.verdict === "target_reached" ? "Yes" : "No", st.verdict === "target_reached" ? "up" : "down"],
+          ["Validation", st.validation_window || st.duration || "—", ""],
           ["Capital", cap + " USDT", ""],
           ["Target", (st.profit_target || "0") + " USDT", ""],
           ["Capital risk", (st.risk_pct || 0) + "%", ""],
@@ -1356,6 +1358,7 @@
         $("bc-verdict").textContent = verdictText(st.verdict);
         $("g-card").classList.remove("hidden");
         $("g-review-actions").classList.remove("hidden");
+        $("g-live").classList.toggle("hidden", st.verdict !== "target_reached");
         const trades = d.trades || [];
         $("g-trades").innerHTML = trades.length
           ? trades.map((t) => `<div class="trade"><span class="tside ${t.side === "long" ? "up" : "down"}">${escapeHtml(t.side)}</span><span style="color:var(--muted)">${escapeHtml(t.outcome)}</span><span class="tpnl ${Number(t.pnl) >= 0 ? "up" : "down"}">${fmtPnl(t.pnl)}</span></div>`).join("")

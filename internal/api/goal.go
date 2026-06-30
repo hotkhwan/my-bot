@@ -59,6 +59,7 @@ type GoalRun struct {
 	WinRatePct     float64   `json:"win_rate_pct" bson:"win_rate_pct"`
 	RealizedPnL    string    `json:"realized_pnl" bson:"realized_pnl"`
 	Verdict        string    `json:"verdict" bson:"verdict"`
+	Validation     string    `json:"validation_window" bson:"validation_window"`
 	CreatedAt      time.Time `json:"created_at" bson:"created_at"`
 }
 
@@ -89,7 +90,9 @@ var allowedDurations = map[string]durationSpec{
 }
 
 const (
-	goalHistoryMax = 500
+	goalHistoryMax              = 500
+	annyBasicPaperExecutionBars = 1000
+	annyBasicPaperMainBars      = 500
 )
 
 // handleGoalRun runs a paper goal over real candles and returns rich stats.
@@ -117,12 +120,23 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 		req.LeverageUsePct = 100
 	}
 	interval := spec.ExecutionInterval
+	paperPlanBars := spec.PlanBars
+	validation := duration
 	strategy := "ema"
 	switch req.Strategy {
 	case "rsi", "macd", "sma", "breakout", "auto", "anny_basic":
 		strategy = req.Strategy
 	}
 	bars := spec.PlanBars + 40 // warmup + a small volatility lookback
+	if strategy == "anny_basic" {
+		// ANNY Basic uses sparse 15m CDC color changes plus QQE crosses. A 15m
+		// live plan may legitimately contain no setup, so paper assessment uses a
+		// longer recent validation sample to calculate trade count / W-L / win rate.
+		interval = "1m"
+		bars = annyBasicPaperExecutionBars
+		paperPlanBars = 0
+		validation = "1000 x 1m"
+	}
 
 	candles, err := s.market.Candles(c.Context(), symbol, interval, bars)
 	if err != nil {
@@ -130,7 +144,7 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 	}
 	var mainCandles []marketdata.Candle
 	if strategy == "anny_basic" {
-		mainCandles, err = s.market.Candles(c.Context(), symbol, "15m", 200)
+		mainCandles, err = s.market.Candles(c.Context(), symbol, "15m", annyBasicPaperMainBars)
 		if err != nil {
 			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "could not load 15m model data for " + symbol})
 		}
@@ -144,14 +158,14 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 
 	result, err := campaign.RunPaper(campaign.PaperConfig{
 		Goal: goal, Symbol: symbol, Strategy: strategy, Bias: bias,
-		PlanBars: spec.PlanBars, MainCandles: mainCandles,
+		PlanBars: paperPlanBars, MainCandles: mainCandles,
 	}, candles)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	userKey := claimsOf(c).Subject
-	stats := summarize(userKey, req, duration, interval, result)
+	stats := summarize(userKey, req, duration, interval, validation, result)
 	// Persist a summary best-effort; a storage failure must not fail the run.
 	if userKey != "" {
 		if err := s.goalRuns.Save(c.Context(), stats); err != nil {
@@ -299,7 +313,7 @@ func buildGoal(req goalRequest) (campaign.Goal, error) {
 	return campaign.ParseGoal(text)
 }
 
-func summarize(userKey string, req goalRequest, duration, interval string, r campaign.PaperResult) GoalRun {
+func summarize(userKey string, req goalRequest, duration, interval, validation string, r campaign.PaperResult) GoalRun {
 	return GoalRun{
 		UserKey:        userKey,
 		Symbol:         r.Symbol,
@@ -318,6 +332,7 @@ func summarize(userKey string, req goalRequest, duration, interval string, r cam
 		WinRatePct:     r.WinRatePct,
 		RealizedPnL:    r.State.RealizedPnL.String(),
 		Verdict:        string(r.Verdict),
+		Validation:     validation,
 		CreatedAt:      time.Now().UTC(),
 	}
 }
@@ -328,7 +343,7 @@ func goalSummaryText(goal campaign.Goal, r campaign.PaperResult, aiNote string) 
 		campaign.StopMaxDrawdown:   "🛑 stopped: max drawdown",
 		campaign.StopMaxTrades:     "⏹ stopped: max trades",
 		campaign.StopStrategyRule:  "stopped: strategy risk rule",
-		campaign.Continue:          "plan window completed",
+		campaign.Continue:          "target not reached in this window",
 	}[r.Verdict]
 	if verdict == "" {
 		verdict = string(r.Verdict)

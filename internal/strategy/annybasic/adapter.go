@@ -8,7 +8,10 @@ import (
 	"bottrade/internal/marketdata"
 )
 
-const mainInterval = 15 * time.Minute
+const (
+	mainInterval        = 15 * time.Minute
+	signalFreshMainBars = 4 // 4 x 15m = 1h confirmation freshness
+)
 
 // ObserveAt builds a closed-candle 15m CDC/QQE observation and confirms it
 // against 1m execution candles through executionIndex.
@@ -26,29 +29,14 @@ func ObserveAt(main15m, execution1m []marketdata.Candle, executionIndex int) (Ob
 	if !ok {
 		return Observation{}, errInsufficientData
 	}
-	previousZone, ok := cdcZone(mainCloses[:len(mainCloses)-1])
-	if !ok {
-		return Observation{}, errInsufficientData
-	}
-	if previousZone == zone {
+	if !cdcTransitionFresh(mainCloses, zone, signalFreshMainBars) {
 		zone = CDCNeutral
 	}
-	currentQQE, previousQQE, err := qqe(mainCloses)
+	currentQQE, _, err := qqe(mainCloses)
 	if err != nil {
 		return Observation{}, err
 	}
-	cross := QQENone
-	switch {
-	case previousQQE.rsi <= previousQQE.signal && currentQQE.rsi > currentQQE.signal:
-		cross = QQECrossUp
-	case previousQQE.rsi >= previousQQE.signal && currentQQE.rsi < currentQQE.signal:
-		cross = QQECrossDown
-	}
-	// A closed 15m signal is eligible only on the first 1m candle after that
-	// close. This prevents re-entering several times from one crossover.
-	if !at.Equal(main[len(main)-1].OpenTime.Add(mainInterval)) {
-		cross = QQENone
-	}
+	cross := recentQQECross(mainCloses, signalFreshMainBars)
 
 	exec := execution1m[:executionIndex+1]
 	execCloses := candleCloses(exec)
@@ -79,6 +67,53 @@ func ObserveAt(main15m, execution1m []marketdata.Candle, executionIndex int) (Ob
 		AbnormalVolatility: abnormal,
 		Sideways:           sideways,
 	}, nil
+}
+
+func cdcTransitionFresh(closes []float64, current CDCZone, maxBars int) bool {
+	if current == CDCNeutral || maxBars <= 0 {
+		return false
+	}
+	if len(closes) < 2 {
+		return false
+	}
+	limit := maxBars
+	if len(closes)-1 < limit {
+		limit = len(closes) - 1
+	}
+	for barsAgo := 1; barsAgo <= limit; barsAgo++ {
+		previous, ok := cdcZone(closes[:len(closes)-barsAgo])
+		if !ok {
+			return false
+		}
+		if previous != current {
+			return true
+		}
+	}
+	return false
+}
+
+func recentQQECross(closes []float64, maxBars int) QQECross {
+	if maxBars <= 0 {
+		return QQENone
+	}
+	limit := maxBars
+	if len(closes) < limit+1 {
+		limit = len(closes) - 1
+	}
+	for barsAgo := 0; barsAgo < limit; barsAgo++ {
+		end := len(closes) - barsAgo
+		current, previous, err := qqe(closes[:end])
+		if err != nil {
+			return QQENone
+		}
+		switch {
+		case previous.rsi <= previous.signal && current.rsi > current.signal:
+			return QQECrossUp
+		case previous.rsi >= previous.signal && current.rsi < current.signal:
+			return QQECrossDown
+		}
+	}
+	return QQENone
 }
 
 func closedBefore(candles []marketdata.Candle, at time.Time) []marketdata.Candle {

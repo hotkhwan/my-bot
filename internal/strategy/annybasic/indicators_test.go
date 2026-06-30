@@ -51,6 +51,72 @@ func TestObserveAtUsesOnlyClosedMainCandles(t *testing.T) {
 	}
 }
 
+func TestCDCTransitionFreshAllowsOneHourConfirmationWindow(t *testing.T) {
+	values := make([]float64, 0, 180)
+	for i := 0; i < 180; i++ {
+		values = append(values, 100+0.03*float64(i)+6*math.Sin(float64(i)*0.18))
+	}
+	freshIndex := -1
+	var zone CDCZone
+	for i := 80; i < len(values); i++ {
+		gotZone, ok := cdcZone(values[:i])
+		if ok && cdcTransitionFresh(values[:i], gotZone, signalFreshMainBars) {
+			freshIndex = i
+			zone = gotZone
+			break
+		}
+	}
+	if freshIndex < 0 {
+		t.Fatal("synthetic fixture did not produce a fresh CDC transition")
+	}
+
+	aged := append([]float64(nil), values[:freshIndex]...)
+	last := aged[len(aged)-1]
+	step := 0.15
+	if zone == CDCRed {
+		step = -0.15
+	}
+	for i := 0; i < signalFreshMainBars+2; i++ {
+		last += step
+		aged = append(aged, last)
+	}
+	agedZone, ok := cdcZone(aged)
+	if !ok {
+		t.Fatal("aged cdcZone not ready")
+	}
+	if cdcTransitionFresh(aged, agedZone, signalFreshMainBars) {
+		t.Fatal("old transition should expire after the freshness window")
+	}
+}
+
+func TestRecentQQECrossUsesFreshnessWindow(t *testing.T) {
+	values := make([]float64, 0, 180)
+	for i := 0; i < 180; i++ {
+		values = append(values, 100+0.03*float64(i)+4*math.Sin(float64(i)*0.27))
+	}
+	crossIndex := -1
+	var cross QQECross
+	for i := 80; i < len(values); i++ {
+		if got := recentQQECross(values[:i], 1); got != QQENone {
+			crossIndex = i
+			cross = got
+			break
+		}
+	}
+	if crossIndex < 0 {
+		t.Fatal("synthetic fixture did not produce a QQE cross")
+	}
+	fresh := append([]float64(nil), values[:crossIndex]...)
+	last := fresh[len(fresh)-1]
+	for i := 0; i < signalFreshMainBars-1; i++ {
+		last += 0.02
+		fresh = append(fresh, last)
+	}
+	if got := recentQQECross(fresh, signalFreshMainBars); got != cross {
+		t.Fatalf("fresh QQE cross = %q, want %q", got, cross)
+	}
+}
+
 func sequence(start, step float64, count int) []float64 {
 	out := make([]float64, count)
 	for i := range out {
