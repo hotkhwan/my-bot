@@ -168,7 +168,7 @@ test("goal run with AI toggle falls back gracefully (no key configured)", async 
   await expect(page.locator("#g-msg")).toContainText("rule-based");
 });
 
-test("goal run shows RR/edge transparency, the fluke guard, and relabeled actions", async ({ page }) => {
+test("target-reached run is launch ready with RR/edge transparency and relabeled actions", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
 
@@ -183,16 +183,18 @@ test("goal run shows RR/edge transparency, the fluke guard, and relabeled action
 
   const card = page.locator("#g-card");
   await expect(card).toBeVisible({ timeout: 20_000 });
+  // Stub uptrend reaches the target with positive edge over >= 2 trades.
+  await expect(card).toContainText("Target reached");
   const stats = page.locator("#bc-stats");
   // New transparency cells: structural reward:risk and the per-trade edge.
   await expect(stats).toContainText("RR");
   await expect(stats).toContainText("1 : 2");
   await expect(stats).toContainText("Edge / trade");
   await expect(stats).toContainText("USDT");
-  // Min-sample fluke guard: the stub only yields a tiny winning sample, so even a
-  // 100%-win run is NOT launch-ready (needs >= 5 trades of positive edge).
+  // Reaching the target IS the success signal — a sparse but target-hitting plan
+  // is launch ready (no longer blocked by the 5-trade non-target sample rule).
   await expect(stats).toContainText("Launch ready");
-  await expect(stats).toContainText("No");
+  await expect(stats).toContainText("Yes");
   // Relabeled action: the edit button now reads "Update plan".
   await expect(page.locator("#g-edit")).toHaveText("Update plan");
   // Next carries the new label (gated behind a Binance key in this harness — the

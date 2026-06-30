@@ -104,9 +104,13 @@ const (
 	annyBasicPaperExecutionBars = 10080 // 7 days of 1m candles; ANNY Basic setups are intentionally sparse.
 	annyBasicPaperMainBars      = 1000
 	goalAIDirectionalConfidence = 50
-	// minLaunchTrades is the smallest paper sample that may be called "launchable".
-	// A 1–2 trade window is luck, not edge: a plan must show positive realized
-	// expectancy over at least this many trades before the Next/launch step opens.
+	// minLaunchSample is the absolute floor of trades for any launchable plan, so a
+	// single lucky fill can never pass the gate — even one that "reached" a trivial
+	// target.
+	minLaunchSample = 2
+	// minLaunchTrades is the sample required to call a plan launchable when it did
+	// NOT reach its profit target: without a target hit, a short window must instead
+	// prove a positive edge over at least this many trades.
 	minLaunchTrades = 5
 	// unlimitedDuration runs the paper engine over a long recent window with no
 	// fixed plan timebox, resolving when the goal hits its profit target or its
@@ -418,12 +422,19 @@ func summarize(userKey string, req goalRequest, duration, interval, validation s
 		Actionable:       r.State.TradesClosed > 0,
 		CreatedAt:        time.Now().UTC(),
 	}
-	// Launchable means the paper sample shows a genuine, RR-adjusted edge — not a
-	// lucky $-target hit. A plan qualifies when it ran at least minLaunchTrades and
-	// the realized PnL (which already nets fees) over that sample is positive, i.e.
-	// positive realized expectancy per trade. This is why a high-RR plan can launch
-	// below 50% win rate, and a 2-trade fluke cannot.
-	stats.Launchable = stats.Trades >= minLaunchTrades && r.State.RealizedPnL.IsPositive()
+	// Launchable means the plan showed a genuine, RR-adjusted edge — not a 1-trade
+	// fluke. Two ways to qualify, both needing positive realized PnL (fees netted)
+	// and at least minLaunchSample trades so a single lucky fill can't pass:
+	//   - it actually REACHED its profit target (target_reached) — hitting the goal
+	//     IS the success signal, even when sparse strategies (e.g. ANNY Basic) need
+	//     only a couple of entries; or
+	//   - it didn't reach target but proved a positive edge over a fuller sample
+	//     (>= minLaunchTrades), so a short non-target window still needs more proof.
+	// This is why a high-RR plan can launch below 50% win rate.
+	positiveEdge := r.State.RealizedPnL.IsPositive()
+	hitTarget := r.Verdict == campaign.StopTargetReached
+	stats.Launchable = positiveEdge && stats.Trades >= minLaunchSample &&
+		(hitTarget || stats.Trades >= minLaunchTrades)
 	if r.State.TradesClosed == 0 {
 		stats.Actionable = false
 		stats.NeedsPlanEdit = true

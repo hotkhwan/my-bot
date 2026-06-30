@@ -370,14 +370,47 @@ func TestGoalRunUnlimitedAndEdgeStats(t *testing.T) {
 	if !ok {
 		t.Fatalf("launchable missing from stats: %v", stats)
 	}
-	// The stub is a steady uptrend: many winning trades, so this run clears the
-	// min-sample + positive-expectancy gate.
-	if trades, _ := stats["trades"].(float64); trades >= float64(minLaunchTrades) {
-		if pnl, _ := stats["realized_pnl"].(string); strings.HasPrefix(pnl, "-") {
-			t.Fatalf("uptrend run should be net positive, pnl = %v", pnl)
+	// The stub is a steady uptrend: it reaches the profit target with positive edge
+	// over >= 2 trades, so it is launchable even though it never needs 5 trades —
+	// hitting the target is the success signal (the case sparse plans were failing).
+	trades, _ := stats["trades"].(float64)
+	if pnl, _ := stats["realized_pnl"].(string); strings.HasPrefix(pnl, "-") {
+		t.Fatalf("uptrend run should be net positive, pnl = %v", pnl)
+	}
+	if stats["verdict"] == "target_reached" && trades >= float64(minLaunchSample) && !launchable {
+		t.Fatalf("target-reached uptrend run (%v trades) should be launchable", trades)
+	}
+}
+
+// TestGoalLaunchableFlukeGuard asserts the launch gate's two safety floors with a
+// table over the launchable rule, so a 1-trade fluke and a short non-target window
+// stay blocked while a target hit or a fuller positive-edge sample pass.
+func TestGoalLaunchableFlukeGuard(t *testing.T) {
+	mk := func(trades int, verdict campaign.Verdict, pnl string) campaign.PaperResult {
+		amt, _ := decimal.Parse(pnl)
+		return campaign.PaperResult{
+			Goal:    campaign.Goal{TargetProfitUSDT: decimal.NewFromInt(5), CapitalUSDT: decimal.NewFromInt(100)},
+			Verdict: verdict,
+			State:   campaign.State{TradesClosed: trades, RealizedPnL: amt},
 		}
-		if !launchable {
-			t.Fatalf("uptrend run with %v trades should be launchable", stats["trades"])
-		}
+	}
+	cases := []struct {
+		name string
+		res  campaign.PaperResult
+		want bool
+	}{
+		{"target hit, 2 trades, positive", mk(2, campaign.StopTargetReached, "1.91"), true},
+		{"target hit but 1 trade (fluke floor)", mk(1, campaign.StopTargetReached, "5"), false},
+		{"no target, 6 trades, positive edge", mk(6, campaign.Continue, "3"), true},
+		{"no target, 3 trades, positive (too short)", mk(3, campaign.Continue, "2"), false},
+		{"target hit but net negative", mk(4, campaign.StopTargetReached, "-1"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := summarize("", goalRequest{}, "unlimited", "5m", "until target or stop", tc.res)
+			if got.Launchable != tc.want {
+				t.Fatalf("launchable = %v, want %v", got.Launchable, tc.want)
+			}
+		})
 	}
 }
