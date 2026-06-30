@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -200,7 +201,33 @@ func (s *Service) Positions(ctx context.Context, userID int64) ([]domain.Positio
 	return pr.Positions(ctx)
 }
 
+// PositionsWithRequiredUserExecutor reads positions only from the user's
+// resolved executor. Automated mission management uses this to avoid silently
+// falling back to a shared/default account.
+func (s *Service) PositionsWithRequiredUserExecutor(ctx context.Context, userID int64) ([]domain.Position, error) {
+	executor, err := s.requiredExecutorForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	pr, ok := executor.(PositionReader)
+	if !ok {
+		return nil, nil
+	}
+	return pr.Positions(ctx)
+}
+
 func (s *Service) Prepare(ctx context.Context, userID int64, intent domain.Intent) (Confirmation, error) {
+	return s.prepare(ctx, userID, intent, "")
+}
+
+// PrepareWithIdempotencyKey is for pre-authorized automation where another
+// durable record owns the single-entry claim. Normal user-confirmed flows should
+// call Prepare so their confirmation id remains the idempotency identity.
+func (s *Service) PrepareWithIdempotencyKey(ctx context.Context, userID int64, intent domain.Intent, idempotencyKey string) (Confirmation, error) {
+	return s.prepare(ctx, userID, intent, idempotencyKey)
+}
+
+func (s *Service) prepare(ctx context.Context, userID int64, intent domain.Intent, idempotencyKey string) (Confirmation, error) {
 	if !intent.IsExchangeChanging() {
 		return Confirmation{}, fmt.Errorf("intent %q does not require confirmation", intent.Type)
 	}
@@ -218,6 +245,10 @@ func (s *Service) Prepare(ctx context.Context, userID int64, intent domain.Inten
 	if err != nil {
 		return Confirmation{}, err
 	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" {
+		idempotencyKey = "confirm:" + id
+	}
 
 	now := s.clock()
 	confirmation := Confirmation{
@@ -227,7 +258,7 @@ func (s *Service) Prepare(ctx context.Context, userID int64, intent domain.Inten
 		Status:         StatusPending,
 		CorrelationID:  correlationID,
 		IntentHash:     intentHash,
-		IdempotencyKey: "confirm:" + id,
+		IdempotencyKey: idempotencyKey,
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(s.ttl),
 	}
@@ -268,6 +299,17 @@ func (s *Service) Prepare(ctx context.Context, userID int64, intent domain.Inten
 }
 
 func (s *Service) Confirm(ctx context.Context, userID int64, id string) (ExecutionResult, error) {
+	return s.confirm(ctx, userID, id, false)
+}
+
+// ConfirmWithRequiredUserExecutor confirms a prepared order only through the
+// user's resolved executor. It is used for pre-authorized automation where
+// falling back to a shared/default executor would violate the user's key scope.
+func (s *Service) ConfirmWithRequiredUserExecutor(ctx context.Context, userID int64, id string) (ExecutionResult, error) {
+	return s.confirm(ctx, userID, id, true)
+}
+
+func (s *Service) confirm(ctx context.Context, userID int64, id string, requireUserExecutor bool) (ExecutionResult, error) {
 	confirmation, result, done, err := s.store.TakeForExecution(ctx, userID, id, s.clock())
 	if err != nil {
 		return ExecutionResult{}, err
@@ -277,28 +319,19 @@ func (s *Service) Confirm(ctx context.Context, userID int64, id string) (Executi
 	}
 
 	s.updateIntentStatus(ctx, confirmation.ID, IntentStatusExecuting, "")
-	result, err = s.executorForUser(ctx, userID).Execute(ctx, confirmation)
+	var executor Executor
+	if requireUserExecutor {
+		executor, err = s.requiredExecutorForUser(ctx, userID)
+		if err != nil {
+			s.failExecutingConfirmation(ctx, id, confirmation, err)
+			return ExecutionResult{}, err
+		}
+	} else {
+		executor = s.executorForUser(ctx, userID)
+	}
+	result, err = executor.Execute(ctx, confirmation)
 	if err != nil {
-		_ = s.store.Fail(ctx, id, err.Error())
-		s.updateIntentStatus(ctx, confirmation.ID, IntentStatusFailed, err.Error())
-		s.recordAudit(ctx, audit.Event{
-			Type:          "confirmation_failed",
-			Source:        "orders",
-			UserID:        userID,
-			CorrelationID: confirmation.CorrelationID,
-			Metadata: map[string]string{
-				"confirmation_id": shortID(id),
-				"intent_hash":     confirmation.IntentHash,
-				"intent_type":     string(confirmation.Intent.Type),
-				"error":           err.Error(),
-			},
-		})
-		s.logger.Error("confirmation execution failed",
-			"confirmation_id", shortID(id),
-			"user_id", userID,
-			"intent_type", confirmation.Intent.Type,
-			"error", err.Error(),
-		)
+		s.failExecutingConfirmation(ctx, id, confirmation, err)
 		return ExecutionResult{}, err
 	}
 
@@ -323,6 +356,43 @@ func (s *Service) Confirm(ctx context.Context, userID int64, id string) (Executi
 	s.recordClosedTrade(ctx, userID, confirmation, result)
 
 	return result, nil
+}
+
+func (s *Service) requiredExecutorForUser(ctx context.Context, userID int64) (Executor, error) {
+	if s.executorFor == nil {
+		return nil, fmt.Errorf("per-user executor is required")
+	}
+	executor, ok, err := s.executorFor.ExecutorFor(ctx, TraderKey(userID))
+	if err != nil {
+		return nil, fmt.Errorf("per-user executor lookup: %w", err)
+	}
+	if !ok || executor == nil {
+		return nil, fmt.Errorf("active per-user executor is required")
+	}
+	return executor, nil
+}
+
+func (s *Service) failExecutingConfirmation(ctx context.Context, id string, confirmation Confirmation, err error) {
+	_ = s.store.Fail(ctx, id, err.Error())
+	s.updateIntentStatus(ctx, confirmation.ID, IntentStatusFailed, err.Error())
+	s.recordAudit(ctx, audit.Event{
+		Type:          "confirmation_failed",
+		Source:        "orders",
+		UserID:        confirmation.UserID,
+		CorrelationID: confirmation.CorrelationID,
+		Metadata: map[string]string{
+			"confirmation_id": shortID(id),
+			"intent_hash":     confirmation.IntentHash,
+			"intent_type":     string(confirmation.Intent.Type),
+			"error":           err.Error(),
+		},
+	})
+	s.logger.Error("confirmation execution failed",
+		"confirmation_id", shortID(id),
+		"user_id", confirmation.UserID,
+		"intent_type", confirmation.Intent.Type,
+		"error", err.Error(),
+	)
 }
 
 // recordClosedTrade journals a completed round-trip when a close executes, using
@@ -436,6 +506,13 @@ func (s *MemoryStore) Put(ctx context.Context, confirmation Confirmation) error 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if confirmation.IdempotencyKey != "" {
+		for _, record := range s.items {
+			if record.confirmation.IdempotencyKey == confirmation.IdempotencyKey {
+				return fmt.Errorf("confirmation idempotency key already exists")
+			}
+		}
+	}
 	s.items[confirmation.ID] = &confirmationRecord{confirmation: confirmation}
 	return nil
 }

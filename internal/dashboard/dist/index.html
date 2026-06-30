@@ -1346,7 +1346,7 @@
           const d = await (await fetch("/api/mission/armed", { headers: authHeaders() })).json();
           const active = (d.armed || []).find((m) => m.status === "armed");
           if (!active || armedMissionId) return;
-          setArmedState(active, `Armed — waiting for an ANNY Basic setup on ${active.symbol}.`);
+          setArmedState(active, `Armed — ANNY may auto-place one testnet entry on ${active.symbol} before this window expires. No setup is guaranteed.`);
         } catch (e) {}
       }
       function fmtPnl(v) { const n = Number(v) || 0; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100); }
@@ -1514,7 +1514,7 @@
           $("g-edit").focus();
           return;
         }
-        if (!confirm("Run a LIVE testnet Mission? If no setup is live, ANNY can arm the plan to wait inside this window. Testnet only.")) return;
+        if (!confirm("Run a LIVE testnet Mission? If no setup is live, ANNY can arm the plan and auto-place one capped testnet entry inside this window. No setup is guaranteed.")) return;
         goalMsg("Preparing live Mission…", true);
         $("g-live").disabled = true;
         const body = { symbol: $("g-symbol").value, capital: $("g-capital").value, capital_risk_pct: parseInt($("g-risk").value, 10) || 5, leverage_use_pct: parseInt($("g-leverage").value, 10) || 25, strategy: $("g-strategy").value, duration: $("g-duration").value, use_ai: $("g-ai").checked };
@@ -1527,7 +1527,7 @@
           // Show the order + Confirm right here under the button, not in the chat box.
           $("g-confirm-out").textContent = d.output || ""; $("g-confirm-out").classList.remove("hidden");
           pendingMission = d.mission || null;
-          if (d.armed) { setArmedState(d.armed, d.output || "Armed — waiting for setup."); }
+          if (d.armed) { setArmedState(d.armed, d.output || "Armed — waiting for setup; one capped testnet entry may be auto-placed before expiry."); }
           else if (d.confirm_id) { missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); $("g-armed-actions").classList.add("hidden"); }
           else { $("g-confirm-actions").classList.add("hidden"); $("g-armed-actions").classList.add("hidden"); }
           $("live-card").scrollIntoView({ behavior: "smooth", block: "start" });

@@ -27,6 +27,61 @@ func missionArmRuntimeEnv(marketDataURL string) map[string]string {
 	}
 }
 
+type missionTestExecutor struct {
+	calls         int
+	confirmations []orders.Confirmation
+}
+
+func (e *missionTestExecutor) Execute(_ context.Context, confirmation orders.Confirmation) (orders.ExecutionResult, error) {
+	e.calls++
+	e.confirmations = append(e.confirmations, confirmation)
+	return orders.ExecutionResult{
+		Mode:          "binance_testnet",
+		ClientOrderID: "testnet-" + confirmation.ID,
+		Message:       "TESTNET accepted",
+	}, nil
+}
+
+type missionTestProvider struct {
+	executor orders.Executor
+	found    bool
+	err      error
+}
+
+func (p missionTestProvider) ExecutorFor(context.Context, string) (orders.Executor, bool, error) {
+	return p.executor, p.found, p.err
+}
+
+func missionOrderService(exec orders.Executor) *orders.Service {
+	return orders.NewServiceWithRepositories(time.Minute, orders.DryRunExecutor{DryRun: true}, orders.ServiceDependencies{
+		ExecutorProvider: missionTestProvider{executor: exec, found: true},
+	}, testLogger())
+}
+
+func testCredentialService(t *testing.T, subject string, testnet bool) *auth.CredentialService {
+	t.Helper()
+	keyring, err := auth.NewKeyring(map[string][]byte{"v1": bytes.Repeat([]byte("a"), auth.KeySize)}, "v1")
+	if err != nil {
+		t.Fatalf("keyring: %v", err)
+	}
+	credSvc, err := auth.NewCredentialService(keyring, &memCredRepo{m: map[string][]auth.BinanceCredential{}})
+	if err != nil {
+		t.Fatalf("credential service: %v", err)
+	}
+	profile := "testnet"
+	if !testnet {
+		profile = "mainnet"
+	}
+	if err := credSvc.StoreProfile(context.Background(), subject, profile,
+		auth.BinanceKeys{APIKey: "k-abcd1234", APISecret: "s-abcd1234", Testnet: testnet}); err != nil {
+		t.Fatalf("store profile: %v", err)
+	}
+	if err := credSvc.SetActive(context.Background(), subject, profile); err != nil {
+		t.Fatalf("set active: %v", err)
+	}
+	return credSvc
+}
+
 func TestMissionPrepareAndConfirm(t *testing.T) {
 	stub := stubKlines(t) // uptrend → EMA goes long
 	cfg := testConfigWith(t, map[string]string{"MARKETDATA_BASE_URL": stub.URL, "ACCESS_OPEN": "true"})
@@ -79,7 +134,8 @@ func TestMissionPrepareANNYBasicDoesNotFallbackToEMA(t *testing.T) {
 	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
 	token, _ := tk.Issue("tg:468848033", "u", "user")
 	orderSvc := orders.NewService(true, time.Minute, testLogger())
-	server := NewServer(cfg, nil, testLogger(), WithTokenizer(tk), WithOrders(orderSvc))
+	server := NewServer(cfg, nil, testLogger(), WithTokenizer(tk), WithOrders(orderSvc),
+		WithCredentials(testCredentialService(t, "tg:468848033", true)))
 
 	body, _ := json.Marshal(map[string]any{
 		"symbol": "BTC", "capital": 100, "strategy": "anny_basic", "duration": "15m", "leverage_use_pct": 50,
@@ -107,7 +163,8 @@ func TestMissionPrepareArmsWhenANNYBasicHasNoSetup(t *testing.T) {
 	token, _ := tk.Issue("tg:468848033", "u", "user")
 	store := newMemArmedMissions()
 	server := NewServer(cfg, nil, testLogger(),
-		WithTokenizer(tk), WithOrders(orders.NewService(true, time.Minute, testLogger())), WithArmedMissionStore(store))
+		WithTokenizer(tk), WithOrders(orders.NewService(true, time.Minute, testLogger())),
+		WithCredentials(testCredentialService(t, "tg:468848033", true)), WithArmedMissionStore(store))
 	server.annyBasicDecider = func(context.Context, string, []marketdata.Candle) (annybasic.Decision, error) {
 		return annybasic.Decision{Reason: "execution not aligned"}, nil
 	}
@@ -264,18 +321,21 @@ func TestArmedMissionRehydrateAndTriggerIdempotency(t *testing.T) {
 	}
 }
 
-func TestArmedMissionWatcherObserveOnlyAndGated(t *testing.T) {
+func TestArmedMissionWatcherAutoConfirmsOnceAndGated(t *testing.T) {
+	stub := stubKlines(t)
 	store := newMemArmedMissions()
 	now := time.Now().UTC()
 	mission := ArmedMission{
 		ID: "arm_watch", UserKey: "tg:7", UserID: 7, Symbol: "BTCUSDT", Strategy: annybasic.ID,
-		Duration: "15m", Status: ArmedMissionStatusArmed, IdempotencyKey: "k1",
+		CapitalUSDT: "100", LeverageUsePct: 50, Duration: "15m", Status: ArmedMissionStatusArmed, IdempotencyKey: "k1",
 		ArmedAt: now, ExpiresAt: now.Add(time.Hour), PurgeAt: armedMissionPurgeAt(now.Add(time.Hour)), CreatedAt: now, UpdatedAt: now,
 	}
 	if err := store.Save(context.Background(), mission); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	server := NewServer(testConfigWith(t, map[string]string{"ACCESS_OPEN": "true"}), nil, testLogger(), WithArmedMissionStore(store))
+	exec := &missionTestExecutor{}
+	server := NewServer(testConfigWith(t, map[string]string{"MARKETDATA_BASE_URL": stub.URL, "ACCESS_OPEN": "true"}), nil, testLogger(),
+		WithOrders(missionOrderService(exec)), WithCredentials(testCredentialService(t, "tg:7", true)), WithArmedMissionStore(store))
 	calls := 0
 	server.annyBasicDecider = func(context.Context, string, []marketdata.Candle) (annybasic.Decision, error) {
 		calls++
@@ -292,13 +352,16 @@ func TestArmedMissionWatcherObserveOnlyAndGated(t *testing.T) {
 	server.cfg.App.DryRun = false
 	triggered, done, err := server.checkArmedMission(context.Background(), mission.ID, now.Add(2*time.Minute))
 	if err != nil || !done || triggered.Status != ArmedMissionStatusTriggered || calls != 1 {
-		t.Fatalf("observe-only trigger = %+v done=%v calls=%d err=%v", triggered, done, calls, err)
+		t.Fatalf("auto trigger = %+v done=%v calls=%d err=%v", triggered, done, calls, err)
 	}
-	if triggered.TriggeredConfirmationID != "" {
-		t.Fatalf("Phase A must not prepare an order, got confirmation %q", triggered.TriggeredConfirmationID)
+	if triggered.TriggeredConfirmationID == "" || exec.calls != 1 {
+		t.Fatalf("Phase B should prepare+confirm once, confirmation=%q calls=%d", triggered.TriggeredConfirmationID, exec.calls)
 	}
 	if triggered.PurgeAt != nil {
 		t.Fatalf("triggered mission purge_at = %v, want nil audit retention", triggered.PurgeAt)
+	}
+	if len(exec.confirmations) != 1 || exec.confirmations[0].IdempotencyKey != mission.IdempotencyKey {
+		t.Fatalf("confirmation idempotency = %+v, want armed key %q", exec.confirmations, mission.IdempotencyKey)
 	}
 }
 

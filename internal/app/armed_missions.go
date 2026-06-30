@@ -122,6 +122,21 @@ func (m *mongoArmedMissions) MarkTriggered(ctx context.Context, id, side, reason
 	})
 }
 
+func (m *mongoArmedMissions) SetTriggeredConfirmation(ctx context.Context, id, confirmationID string, now time.Time) (api.ArmedMission, bool, error) {
+	return m.transition(ctx, bson.D{
+		{Key: "_id", Value: id},
+		{Key: "status", Value: api.ArmedMissionStatusTriggered},
+		{Key: "$or", Value: bson.A{
+			bson.D{{Key: "triggered_confirmation_id", Value: bson.D{{Key: "$exists", Value: false}}}},
+			bson.D{{Key: "triggered_confirmation_id", Value: ""}},
+			bson.D{{Key: "triggered_confirmation_id", Value: confirmationID}},
+		}},
+	}, bson.D{{Key: "$set", Value: bson.D{
+		{Key: "triggered_confirmation_id", Value: confirmationID},
+		{Key: "updated_at", Value: now},
+	}}})
+}
+
 func (m *mongoArmedMissions) transition(ctx context.Context, filter bson.D, update bson.D) (api.ArmedMission, bool, error) {
 	var mission api.ArmedMission
 	err := m.coll.FindOneAndUpdate(ctx, filter, update, options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&mission)

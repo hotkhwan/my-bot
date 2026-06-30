@@ -112,6 +112,45 @@ func TestServiceUsesPerUserExecutorWithFallback(t *testing.T) {
 	}
 }
 
+func TestServicePrepareWithIdempotencyKeyRejectsDuplicate(t *testing.T) {
+	service := NewServiceWithExecutor(5*time.Minute, DryRunExecutor{DryRun: true}, testLogger())
+	ctx := context.Background()
+	if _, err := service.PrepareWithIdempotencyKey(ctx, 12345, testOpenIntent(), "armed:one"); err != nil {
+		t.Fatalf("first prepare: %v", err)
+	}
+	if _, err := service.PrepareWithIdempotencyKey(ctx, 12345, testOpenIntent(), "armed:one"); err == nil {
+		t.Fatal("second prepare with same idempotency key succeeded, want duplicate rejection")
+	}
+}
+
+func TestServiceConfirmWithRequiredUserExecutorRejectsFallback(t *testing.T) {
+	ctx := context.Background()
+	service := NewServiceWithRepositories(5*time.Minute, DryRunExecutor{DryRun: true},
+		ServiceDependencies{ExecutorProvider: stubProvider{found: false}}, testLogger())
+	conf, err := service.Prepare(ctx, 12345, testOpenIntent())
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if _, err := service.ConfirmWithRequiredUserExecutor(ctx, 12345, conf.ID); err == nil {
+		t.Fatal("ConfirmWithRequiredUserExecutor succeeded without a per-user executor")
+	}
+
+	perUser := stubExecutor{result: ExecutionResult{Mode: "per-user", ClientOrderID: "pu"}}
+	strict := NewServiceWithRepositories(5*time.Minute, DryRunExecutor{DryRun: true},
+		ServiceDependencies{ExecutorProvider: stubProvider{executor: perUser, found: true}}, testLogger())
+	conf, err = strict.Prepare(ctx, 12345, testOpenIntent())
+	if err != nil {
+		t.Fatalf("strict prepare: %v", err)
+	}
+	res, err := strict.ConfirmWithRequiredUserExecutor(ctx, 12345, conf.ID)
+	if err != nil {
+		t.Fatalf("strict confirm: %v", err)
+	}
+	if res.Mode != "per-user" {
+		t.Fatalf("strict mode = %q, want per-user", res.Mode)
+	}
+}
+
 func TestServiceConfirmExecutesDryRunOnce(t *testing.T) {
 	service := NewServiceWithExecutor(5*time.Minute, DryRunExecutor{DryRun: true}, testLogger())
 	intent := testOpenIntent()

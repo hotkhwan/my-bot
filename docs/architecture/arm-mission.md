@@ -1,9 +1,9 @@
-# Arm Mission — wait-for-setup live entry — PROPOSAL (pending review)
+# Arm Mission — wait-for-setup live entry — GO-WITH-CONDITIONS (testnet pre-launch)
 
-> Status: **PROPOSAL**, not Source of Truth. Owner: Codex (live execution).
-> This is a **live-trading** feature — it must pass the **Security Gate** and
-> **Legal Gate** before any merge, and ship **testnet-only** behind the existing
-> campaign-live gating. Codex should not implement until §5 is signed off.
+> Status: **GO-WITH-CONDITIONS** for testnet pre-launch engineering. Owner:
+> Codex (live execution). External legal sign-off is still required before any
+> prod / real-key promotion. Ship **testnet-only** behind the existing
+> campaign-live gating.
 
 ## 0. Problem
 
@@ -58,11 +58,15 @@ ArmedMission {
   id, userKey/userID, symbol, strategy, side?(nil until trigger),
   capitalUSDT, leverageUsePct, durationWindow,
   armedAt, expiresAt, status: armed|triggered|expired|disarmed,
-  idempotencyKey, triggeredConfirmationID?, createdAt
-}  // TTL index on expiresAt
+  idempotencyKey, triggeredConfirmationID?, purgeAt?, createdAt
+}
 ```
 
 On boot, rehydrate `status=armed && now<expiresAt` and resume their watchers.
+`expiresAt` is the entry window. TTL must use `purgeAt`, not `expiresAt`:
+armed/expired/disarmed records set `purgeAt = expiresAt + retention` (currently
+90d), while triggered records leave `purgeAt` unset so testnet-entry audit is
+kept.
 
 ## 4. Safety model — arming = bounded pre-authorization
 

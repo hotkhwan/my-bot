@@ -78,7 +78,7 @@ type Server struct {
 	usage            *memUsage
 	annyBasicDecider annyBasicDecisionFunc
 	timedMissions    sync.Map // confirmation id -> timedMission; dev/testnet only
-	armedWatchers    sync.Map // armed mission id -> struct{}; phase-A observe-only watchers
+	armedWatchers    sync.Map // armed mission id -> struct{}; testnet wait-for-setup watchers
 	runtimeCtx       context.Context
 	logger           *slog.Logger
 	app              *fiber.App
