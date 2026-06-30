@@ -1,29 +1,41 @@
 name: Deploy to Fly.io
 
-# Auto-deploy: every push to main ships to the Fly app. Requires a repo secret
-# FLY_API_TOKEN (create one with `flyctl tokens create deploy`, then add it under
-# Settings → Secrets and variables → Actions → New repository secret).
+# Auto-deploy: every push to develop ships to the Fly testnet app at
+# https://aliza-trading.fly.dev/. Requires a repo secret FLY_API_TOKEN
+# (create one with `flyctl tokens create deploy`, then add it under
+# Settings -> Secrets and variables -> Actions -> New repository secret).
 #
-# Branch → environment plan (see memory "deploy-environments"):
-#   main    → aliza-trading        (production at launch)
-#   develop → (future) a separate dev app, wired here when the dev env exists
+# Branch -> environment plan:
+#   develop -> aliza-trading (testnet, Fly.io)
+#   main    -> production/mainnet app later, ideally a separate Fly app with
+#              separate secrets and GitHub environment approval.
+#
+# Do not point main at the develop/testnet app. Production can use Fly.io too,
+# but it must use a separate app, secrets, database, domain, and explicit
+# production approval before real trading is enabled.
 on:
   push:
-    branches: [main]
+    branches: [develop]
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 concurrency:
-  group: deploy-main
+  group: deploy-develop-testnet
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy main → aliza-trading
+    name: Deploy develop -> aliza-trading testnet
     runs-on: ubuntu-latest
+    environment: develop-testnet
+    env:
+      FLY_APP_NAME: aliza-trading
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Deploy
-        run: flyctl deploy --remote-only -a aliza-trading
+      - name: Deploy testnet
+        run: flyctl deploy --remote-only -a "$FLY_APP_NAME"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
