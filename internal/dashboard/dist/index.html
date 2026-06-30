@@ -1315,7 +1315,8 @@
         box.classList.remove("hidden");
       }
       function fmtPnl(v) { const n = Number(v) || 0; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100); }
-      function verdictText(v) {
+      function verdictText(v, st) {
+        if ((st && st.strategy || "").startsWith("anny_basic") && Number((st && st.trades) || 0) === 0) return "No CDC/QQE setup in this validation window";
         return ({ target_reached: "🎯 Target reached", max_drawdown: "🛑 Stopped: capital risk limit", max_trades: "⏹ Stopped: max trades", continue: "Target not reached in this window" })[v] || v || "";
       }
       // bcardSpark draws a Binance-style area sparkline (line + soft fill), green
@@ -1331,13 +1332,14 @@
         const area = `${x(0).toFixed(1)},${h - pad} ${pts} ${x(vals.length - 1).toFixed(1)},${h - pad}`;
         return `<svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polygon points="${area}" fill="${fill}"/><polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
       }
-      function renderGoalResult(d) {
+      function renderGoalResult(d, request) {
         const st = d.stats || {};
         const pnl = Number(st.realized_pnl || 0), up = pnl >= 0;
         const cap = Number(st.capital || 100) || 100;
         const roi = (pnl / cap) * 100;
         $("bc-sym").textContent = st.symbol || normSym($("g-symbol").value) || "—";
-        const tags = [`<span class="bcard-tag">${escapeHtml(st.strategy || "")}</span>`, `<span class="bcard-tag">${escapeHtml(st.duration || "")} plan</span>`, `<span class="bcard-tag">${escapeHtml(st.interval || "")} execution</span>`];
+        const shownDuration = (request && request.duration) || st.duration || $("g-duration").value || "";
+        const tags = [`<span class="bcard-tag">${escapeHtml(st.strategy || "")}</span>`, `<span class="bcard-tag">${escapeHtml(shownDuration)} plan</span>`, `<span class="bcard-tag">${escapeHtml(st.interval || "")} execution</span>`];
         if (st.used_ai) tags.push('<span class="bcard-tag ai">· AI</span>');
         $("bc-tags").innerHTML = tags.join(" ");
         $("bc-pnl").textContent = (up ? "+" : "") + (Math.round(pnl * 100) / 100); $("bc-pnl").className = "bcard-num mono " + (up ? "up" : "down");
@@ -1355,7 +1357,7 @@
           ["Leverage use", (st.leverage_use_pct || 0) + "%", ""],
         ];
         $("bc-stats").innerHTML = cells.map(([k, v, cls]) => `<div class="bcard-cell"><div class="ck">${k}</div><div class="cv ${cls}">${escapeHtml(v)}</div></div>`).join("");
-        $("bc-verdict").textContent = verdictText(st.verdict);
+        $("bc-verdict").textContent = verdictText(st.verdict, st);
         $("g-card").classList.remove("hidden");
         $("g-review-actions").classList.remove("hidden");
         $("g-live").classList.toggle("hidden", st.verdict !== "target_reached");
@@ -1380,7 +1382,7 @@
           const d = await r.json().catch(() => ({}));
           if (!r.ok) { goalMsg(d.error || `Failed (${r.status})`); return; }
           if (!d.ai) goalMsg("");
-          renderGoalResult(d); loadGoalHistory();
+          renderGoalResult(d, body); loadGoalHistory();
           $("g-card").scrollIntoView({ behavior:"smooth", block:"center" });
         } catch (e) { goalMsg("Network error"); }
         finally { $("g-run").disabled = false; }

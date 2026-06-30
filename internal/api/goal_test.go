@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,7 +11,18 @@ import (
 	"testing"
 
 	"bottrade/internal/auth"
+	"bottrade/internal/campaign"
+	"bottrade/internal/signals"
 )
+
+type fixedAdvisor struct {
+	decision signals.Decision
+	err      error
+}
+
+func (f fixedAdvisor) Decide(context.Context, signals.MarketSignal) (signals.Decision, error) {
+	return f.decision, f.err
+}
 
 // stubKlines serves an uptrending klines series so the EMA strategy takes longs
 // whose take-profit is hit — a deterministic "goal reached" paper run.
@@ -163,5 +175,44 @@ func TestPlanDurationExecutionIntervals(t *testing.T) {
 		if got := allowedDurations[duration]; got != expected {
 			t.Errorf("%s spec = %+v, want %+v", duration, got, expected)
 		}
+	}
+}
+
+func TestAnnyBasicGoalPreservesRequestedDuration(t *testing.T) {
+	server, token := goalServer(t)
+
+	code, out := postGoal(t, server, token, map[string]any{
+		"profit": 10, "capital": 100, "capital_risk_pct": 50, "leverage_use_pct": 50,
+		"symbol": "BTC", "strategy": "anny_basic", "duration": "1h",
+	})
+	if code != http.StatusOK {
+		t.Fatalf("anny goal status = %d (%v)", code, out)
+	}
+	stats, _ := out["stats"].(map[string]any)
+	if stats == nil {
+		t.Fatalf("no stats in response: %v", out)
+	}
+	if stats["duration"] != "1h" || stats["interval"] != "1m" {
+		t.Fatalf("plan/execution timeframe = %v/%v, want 1h/1m", stats["duration"], stats["interval"])
+	}
+	if stats["validation_window"] != "1000 x 1m" {
+		t.Fatalf("validation window = %v, want 1000 x 1m", stats["validation_window"])
+	}
+}
+
+func TestAIBiasLowConfidenceUsesBothSides(t *testing.T) {
+	cfg := testConfigWith(t, nil)
+	server := NewServer(cfg, nil, testLogger(), WithAdvisor(fixedAdvisor{decision: signals.Decision{
+		Action:            signals.ActionOpen,
+		Side:              "long",
+		ConfidencePercent: 35,
+	}}))
+
+	bias, note := server.aiBias(context.Background(), "tg:468848033", "BTCUSDT", 60000)
+	if bias != campaign.BiasBoth {
+		t.Fatalf("bias = %q, want both", bias)
+	}
+	if !strings.Contains(note, "confidence 35% is low") {
+		t.Fatalf("note = %q, want low-confidence explanation", note)
 	}
 }

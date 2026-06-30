@@ -93,6 +93,7 @@ const (
 	goalHistoryMax              = 500
 	annyBasicPaperExecutionBars = 1000
 	annyBasicPaperMainBars      = 500
+	goalAIDirectionalConfidence = 50
 )
 
 // handleGoalRun runs a paper goal over real candles and returns rich stats.
@@ -266,6 +267,9 @@ func (s *Server) aiBias(ctx context.Context, subject, symbol string, price float
 	who := "AI"
 	if byo {
 		who = "Your AI"
+	}
+	if decision.ConfidencePercent > 0 && decision.ConfidencePercent < goalAIDirectionalConfidence {
+		return campaign.BiasBoth, who + " confidence " + strconv.Itoa(decision.ConfidencePercent) + "% is low - used both sides."
 	}
 	switch strings.ToLower(decision.Side) {
 	case "long":
