@@ -63,6 +63,8 @@ test("ANNY Basic no-setup asks for plan edit, not a zero paper result", async ({
   await expect(page.locator("#bc-mode")).toContainText("EDIT PLAN");
   await expect(page.locator("#bc-pnl")).toContainText("Needs edit");
   await expect(page.locator("#bc-roi")).toContainText("No paper result");
+  await expect(card).toContainText("Market data");
+  await expect(card).toContainText("OK");
   await expect(card).toContainText("Est. entries");
   await expect(card).toContainText("Trades found");
   await expect(card).toContainText("No CDC/QQE setup");

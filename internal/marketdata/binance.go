@@ -22,6 +22,8 @@ import (
 // endpoints.
 const DefaultBinanceBaseURL = "https://fapi.binance.com"
 
+const maxKlineCandlesPerRequest = 1000
+
 // BinanceProvider reads Binance Futures' free public market-data endpoints. No
 // API key is required. It is safe for concurrent use.
 type BinanceProvider struct {
@@ -311,10 +313,56 @@ func (p *BinanceProvider) Candles(ctx context.Context, symbol, interval string, 
 	if limit <= 0 {
 		limit = 200
 	}
+	if limit > maxKlineCandlesPerRequest {
+		return p.candlesPaged(ctx, symbol, interval, limit)
+	}
+	return p.candlePage(ctx, symbol, interval, limit, 0)
+}
+
+func (p *BinanceProvider) candlesPaged(ctx context.Context, symbol, interval string, limit int) ([]Candle, error) {
+	remaining := limit
+	var endTime int64
+	var out []Candle
+	for remaining > 0 {
+		pageLimit := remaining
+		if pageLimit > maxKlineCandlesPerRequest {
+			pageLimit = maxKlineCandlesPerRequest
+		}
+		page, err := p.candlePage(ctx, symbol, interval, pageLimit, endTime)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		nextEnd := page[0].OpenTime.UnixMilli() - 1
+		if endTime > 0 && nextEnd >= endTime {
+			break
+		}
+		out = append(page, out...)
+		endTime = nextEnd
+		remaining -= len(page)
+		if len(page) < pageLimit {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("marketdata: no klines for %s %s", symbol, interval)
+	}
+	if len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
+
+func (p *BinanceProvider) candlePage(ctx context.Context, symbol, interval string, limit int, endTime int64) ([]Candle, error) {
 	params := url.Values{
 		"symbol":   {symbol},
 		"interval": {interval},
 		"limit":    {strconv.Itoa(limit)},
+	}
+	if endTime > 0 {
+		params.Set("endTime", strconv.FormatInt(endTime, 10))
 	}
 	var rows [][]any
 	if err := p.get(ctx, "/fapi/v1/klines", params, &rows); err != nil {

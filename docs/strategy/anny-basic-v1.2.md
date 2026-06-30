@@ -50,6 +50,11 @@ use only 15m candles whose close time is at or before the current 1m candle
 open, preventing look-ahead. Entry, SL/TP resolution, timeout, and fees use 1m
 OHLC candles.
 
+Because CDC/QQE setups are sparse, the dashboard paper assessment uses an
+extended recent validation sample. `No CDC/QQE setup` means public Binance
+market data loaded successfully but no eligible setup was found in that sample.
+Market-data failures must surface as API errors, not as no-setup results.
+
 ## Delivery Gates
 
 1. Run fee-adjusted walk-forward paper tests and publish both gains and losses.

@@ -95,8 +95,8 @@ var allowedDurations = map[string]durationSpec{
 
 const (
 	goalHistoryMax              = 500
-	annyBasicPaperExecutionBars = 1000
-	annyBasicPaperMainBars      = 500
+	annyBasicPaperExecutionBars = 10080 // 7 days of 1m candles; ANNY Basic setups are intentionally sparse.
+	annyBasicPaperMainBars      = 1000
 	goalAIDirectionalConfidence = 50
 )
 
@@ -140,12 +140,15 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 		interval = "1m"
 		bars = annyBasicPaperExecutionBars
 		paperPlanBars = 0
-		validation = "1000 x 1m"
+		validation = fmt.Sprintf("%d x 1m", annyBasicPaperExecutionBars)
 	}
 
 	candles, err := s.market.Candles(c.Context(), symbol, interval, bars)
 	if err != nil {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "could not load market data for " + symbol})
+	}
+	if strategy == "anny_basic" {
+		validation = fmt.Sprintf("%d x %s", len(candles), interval)
 	}
 	var mainCandles []marketdata.Candle
 	if strategy == "anny_basic" {
@@ -398,7 +401,7 @@ func goalSummaryText(goal campaign.Goal, r campaign.PaperResult, stats GoalRun, 
 	}
 	if stats.NeedsPlanEdit {
 		fmt.Fprintf(&b, "\n📊 Plan assessment on real %s candles: edit plan\n", r.Symbol)
-		fmt.Fprintf(&b, "%s. No paper result is launchable from this window. Estimated entries needed by goal math: %d. Try a longer validation window, another duration, another symbol, or another strategy.",
+		fmt.Fprintf(&b, "%s. Market data loaded, but no paper result is launchable from this window. Estimated entries needed by goal math: %d. Try a longer validation window, another duration, another symbol, or another strategy.",
 			stats.BlockedReason, stats.EstimatedEntries)
 		return b.String()
 	}

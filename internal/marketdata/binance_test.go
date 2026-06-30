@@ -2,8 +2,10 @@ package marketdata
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -157,6 +159,54 @@ func TestBinanceProviderCandles(t *testing.T) {
 	if c.OpenTime.IsZero() {
 		t.Fatal("candle open time not parsed")
 	}
+}
+
+func TestBinanceProviderCandlesPaginatesLargeLimit(t *testing.T) {
+	var calls int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/fapi/v1/klines", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("endTime") == "" {
+			_, _ = w.Write([]byte(klineRows(1000, maxKlineCandlesPerRequest)))
+			return
+		}
+		if r.URL.Query().Get("limit") != "1" {
+			t.Errorf("older page limit = %q, want 1", r.URL.Query().Get("limit"))
+		}
+		_, _ = w.Write([]byte(klineRows(1, 1)))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	candles, err := NewBinanceProvider(server.URL, server.Client()).Candles(context.Background(), "BTCUSDT", "1m", maxKlineCandlesPerRequest+1)
+	if err != nil {
+		t.Fatalf("Candles: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+	if len(candles) != maxKlineCandlesPerRequest+1 {
+		t.Fatalf("candles = %d, want %d", len(candles), maxKlineCandlesPerRequest+1)
+	}
+	if candles[0].OpenTime.UnixMilli() != 1 || candles[len(candles)-1].OpenTime.UnixMilli() != 1999 {
+		t.Fatalf("unexpected candle order: first=%d last=%d", candles[0].OpenTime.UnixMilli(), candles[len(candles)-1].OpenTime.UnixMilli())
+	}
+}
+
+func klineRows(start, count int) string {
+	var b strings.Builder
+	b.WriteString("[")
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		open := start + i
+		closePrice := 100 + float64(open)/1000
+		fmt.Fprintf(&b, `[%d,"%.4f","%.4f","%.4f","%.4f","1",%d]`,
+			open, closePrice, closePrice+1, closePrice-1, closePrice, open+1)
+	}
+	b.WriteString("]")
+	return b.String()
 }
 
 func TestBinanceProviderInvalidPeriodDefaultsTo5m(t *testing.T) {

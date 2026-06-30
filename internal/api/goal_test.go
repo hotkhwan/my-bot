@@ -201,8 +201,8 @@ func TestAnnyBasicGoalPreservesRequestedDuration(t *testing.T) {
 	if stats["duration"] != "1h" || stats["interval"] != "1m" {
 		t.Fatalf("plan/execution timeframe = %v/%v, want 1h/1m", stats["duration"], stats["interval"])
 	}
-	if stats["validation_window"] != "1000 x 1m" {
-		t.Fatalf("validation window = %v, want 1000 x 1m", stats["validation_window"])
+	if stats["validation_window"] != "90 x 1m" {
+		t.Fatalf("validation window = %v, want actual loaded candles 90 x 1m", stats["validation_window"])
 	}
 	if stats["actionable"] != false || stats["needs_plan_edit"] != true {
 		t.Fatalf("actionability = actionable:%v needs_plan_edit:%v, want plan edit", stats["actionable"], stats["needs_plan_edit"])
@@ -213,7 +213,7 @@ func TestAnnyBasicGoalPreservesRequestedDuration(t *testing.T) {
 	if estimate, _ := stats["estimated_entries"].(float64); estimate <= 0 {
 		t.Fatalf("estimated entries = %v, want positive estimate", stats["estimated_entries"])
 	}
-	if output, _ := out["output"].(string); !strings.Contains(output, "edit plan") || !strings.Contains(output, "Estimated entries needed") {
+	if output, _ := out["output"].(string); !strings.Contains(output, "edit plan") || !strings.Contains(output, "Market data loaded") || !strings.Contains(output, "Estimated entries needed") {
 		t.Fatalf("output = %q, want edit-plan guidance with entry estimate", output)
 	}
 	hreq := httptest.NewRequest(http.MethodGet, "/api/goal/history", nil)

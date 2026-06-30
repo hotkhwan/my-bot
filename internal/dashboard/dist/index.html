@@ -1377,6 +1377,7 @@
           $("bc-spark").innerHTML = (d.curve && d.curve.length) ? bcardSpark(d.curve.map(Number)) : "";
         }
         const cells = needsEdit ? [
+          ["Market data", "OK", "up"],
           ["Est. entries", String(st.estimated_entries || "—"), ""],
           ["Trades found", String(st.trades || 0), "down"],
           ["Validation", st.validation_window || st.duration || "—", ""],
