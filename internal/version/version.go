@@ -4,4 +4,4 @@ package version
 
 // Version is the human-readable app version, surfaced in /api/me and shown on
 // the dashboard Home screen. Bump it (semver) whenever you ship.
-const Version = "0.9.33"
+const Version = "0.9.34"

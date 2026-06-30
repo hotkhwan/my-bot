@@ -53,6 +53,10 @@ OHLC candles.
 ## Delivery Gates
 
 1. Run fee-adjusted walk-forward paper tests and publish both gains and losses.
-2. Integrate with Mission confirmation and Flight Recorder on dry-run/testnet.
-3. Consider production only after Security and Legal review. Real trading stays
+2. Paper assessment must report the estimated entries needed by goal math and
+   the actual trades found in the validation window.
+3. If a validation window has no CDC/QQE setup, treat it as `edit plan`, not a
+   launchable Mission or Flight Recorder result.
+4. Integrate with Mission confirmation and Flight Recorder on dry-run/testnet.
+5. Consider production only after Security and Legal review. Real trading stays
    disabled by default.

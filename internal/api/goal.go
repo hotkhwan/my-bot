@@ -42,25 +42,29 @@ type goalRequest struct {
 // subject (UserKey) so it works for any authenticated user — Telegram or
 // password — not just Telegram accounts.
 type GoalRun struct {
-	UserKey        string    `json:"-" bson:"user_key"`
-	Symbol         string    `json:"symbol" bson:"symbol"`
-	Strategy       string    `json:"strategy" bson:"strategy"`
-	Interval       string    `json:"interval" bson:"interval"`
-	Duration       string    `json:"duration" bson:"duration"`
-	Bias           string    `json:"bias" bson:"bias"`
-	UsedAI         bool      `json:"used_ai" bson:"used_ai"`
-	ProfitTarget   string    `json:"profit_target" bson:"profit_target"`
-	Capital        string    `json:"capital" bson:"capital"`
-	RiskPct        int       `json:"risk_pct" bson:"risk_pct"`
-	LeverageUsePct int       `json:"leverage_use_pct" bson:"leverage_use_pct"`
-	Trades         int       `json:"trades" bson:"trades"`
-	Wins           int       `json:"wins" bson:"wins"`
-	Losses         int       `json:"losses" bson:"losses"`
-	WinRatePct     float64   `json:"win_rate_pct" bson:"win_rate_pct"`
-	RealizedPnL    string    `json:"realized_pnl" bson:"realized_pnl"`
-	Verdict        string    `json:"verdict" bson:"verdict"`
-	Validation     string    `json:"validation_window" bson:"validation_window"`
-	CreatedAt      time.Time `json:"created_at" bson:"created_at"`
+	UserKey          string    `json:"-" bson:"user_key"`
+	Symbol           string    `json:"symbol" bson:"symbol"`
+	Strategy         string    `json:"strategy" bson:"strategy"`
+	Interval         string    `json:"interval" bson:"interval"`
+	Duration         string    `json:"duration" bson:"duration"`
+	Bias             string    `json:"bias" bson:"bias"`
+	UsedAI           bool      `json:"used_ai" bson:"used_ai"`
+	ProfitTarget     string    `json:"profit_target" bson:"profit_target"`
+	Capital          string    `json:"capital" bson:"capital"`
+	RiskPct          int       `json:"risk_pct" bson:"risk_pct"`
+	LeverageUsePct   int       `json:"leverage_use_pct" bson:"leverage_use_pct"`
+	Trades           int       `json:"trades" bson:"trades"`
+	Wins             int       `json:"wins" bson:"wins"`
+	Losses           int       `json:"losses" bson:"losses"`
+	WinRatePct       float64   `json:"win_rate_pct" bson:"win_rate_pct"`
+	RealizedPnL      string    `json:"realized_pnl" bson:"realized_pnl"`
+	Verdict          string    `json:"verdict" bson:"verdict"`
+	Validation       string    `json:"validation_window" bson:"validation_window"`
+	EstimatedEntries int       `json:"estimated_entries" bson:"estimated_entries"`
+	Actionable       bool      `json:"actionable" bson:"actionable"`
+	NeedsPlanEdit    bool      `json:"needs_plan_edit" bson:"needs_plan_edit"`
+	BlockedReason    string    `json:"blocked_reason,omitempty" bson:"blocked_reason,omitempty"`
+	CreatedAt        time.Time `json:"created_at" bson:"created_at"`
 }
 
 // GoalRunStore persists and lists paper goal runs for a user, keyed by JWT
@@ -168,7 +172,7 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 	userKey := claimsOf(c).Subject
 	stats := summarize(userKey, req, duration, interval, validation, result)
 	// Persist a summary best-effort; a storage failure must not fail the run.
-	if userKey != "" {
+	if userKey != "" && actionableGoalRun(stats) {
 		if err := s.goalRuns.Save(c.Context(), stats); err != nil {
 			s.logger.Warn("goal run persist failed", "error", err)
 		}
@@ -188,7 +192,7 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 		})
 	}
 	return c.JSON(fiber.Map{
-		"output": goalSummaryText(goal, result, aiNote),
+		"output": goalSummaryText(goal, result, stats, aiNote),
 		"ai":     aiNote,
 		"curve":  curve,
 		"stats":  stats,
@@ -216,6 +220,7 @@ func (s *Server) handleGoalHistory(c fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not load goal history"})
 	}
+	runs = filterActionableGoalRuns(runs)
 	if runs == nil {
 		runs = []GoalRun{}
 	}
@@ -318,30 +323,63 @@ func buildGoal(req goalRequest) (campaign.Goal, error) {
 }
 
 func summarize(userKey string, req goalRequest, duration, interval, validation string, r campaign.PaperResult) GoalRun {
-	return GoalRun{
-		UserKey:        userKey,
-		Symbol:         r.Symbol,
-		Strategy:       r.Strategy,
-		Interval:       interval,
-		Duration:       duration,
-		Bias:           string(r.Bias),
-		UsedAI:         req.UseAI,
-		ProfitTarget:   r.Goal.TargetProfitUSDT.String(),
-		Capital:        r.Goal.CapitalUSDT.String(),
-		RiskPct:        r.Goal.RiskPercent(),
-		LeverageUsePct: req.LeverageUsePct,
-		Trades:         r.State.TradesClosed,
-		Wins:           r.Wins,
-		Losses:         r.Losses,
-		WinRatePct:     r.WinRatePct,
-		RealizedPnL:    r.State.RealizedPnL.String(),
-		Verdict:        string(r.Verdict),
-		Validation:     validation,
-		CreatedAt:      time.Now().UTC(),
+	estimate, _ := campaign.EstimateTrades(r.Goal)
+	stats := GoalRun{
+		UserKey:          userKey,
+		Symbol:           r.Symbol,
+		Strategy:         r.Strategy,
+		Interval:         interval,
+		Duration:         duration,
+		Bias:             string(r.Bias),
+		UsedAI:           req.UseAI,
+		ProfitTarget:     r.Goal.TargetProfitUSDT.String(),
+		Capital:          r.Goal.CapitalUSDT.String(),
+		RiskPct:          r.Goal.RiskPercent(),
+		LeverageUsePct:   req.LeverageUsePct,
+		Trades:           r.State.TradesClosed,
+		Wins:             r.Wins,
+		Losses:           r.Losses,
+		WinRatePct:       r.WinRatePct,
+		RealizedPnL:      r.State.RealizedPnL.String(),
+		Verdict:          string(r.Verdict),
+		Validation:       validation,
+		EstimatedEntries: estimate,
+		Actionable:       r.State.TradesClosed > 0,
+		CreatedAt:        time.Now().UTC(),
 	}
+	if r.State.TradesClosed == 0 {
+		stats.Actionable = false
+		stats.NeedsPlanEdit = true
+		stats.BlockedReason = noSetupReason(r)
+	}
+	return stats
 }
 
-func goalSummaryText(goal campaign.Goal, r campaign.PaperResult, aiNote string) string {
+func noSetupReason(r campaign.PaperResult) string {
+	if strings.HasPrefix(r.Strategy, "anny_basic") {
+		return "No CDC/QQE setup in this validation window"
+	}
+	return "No trade setup in this validation window"
+}
+
+func actionableGoalRun(r GoalRun) bool {
+	return r.Trades > 0 && !r.NeedsPlanEdit
+}
+
+func filterActionableGoalRuns(runs []GoalRun) []GoalRun {
+	if len(runs) == 0 {
+		return runs
+	}
+	out := runs[:0]
+	for _, run := range runs {
+		if actionableGoalRun(run) {
+			out = append(out, run)
+		}
+	}
+	return out
+}
+
+func goalSummaryText(goal campaign.Goal, r campaign.PaperResult, stats GoalRun, aiNote string) string {
 	verdict := map[campaign.Verdict]string{
 		campaign.StopTargetReached: "🎯 target reached",
 		campaign.StopMaxDrawdown:   "🛑 stopped: max drawdown",
@@ -358,7 +396,16 @@ func goalSummaryText(goal campaign.Goal, r campaign.PaperResult, aiNote string) 
 	if aiNote != "" {
 		fmt.Fprintf(&b, "%s\n", aiNote)
 	}
+	if stats.NeedsPlanEdit {
+		fmt.Fprintf(&b, "\n📊 Paper assessment on real %s candles: edit plan\n", r.Symbol)
+		fmt.Fprintf(&b, "%s. Estimated entries needed by goal math: %d. Try a longer validation window, another duration, another symbol, or another strategy.",
+			stats.BlockedReason, stats.EstimatedEntries)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "\n📊 Paper run on real %s candles (no real orders): %s\n", r.Symbol, verdict)
+	if stats.EstimatedEntries > 0 {
+		fmt.Fprintf(&b, "Estimated entries needed: %d\n", stats.EstimatedEntries)
+	}
 	fmt.Fprintf(&b, "Trades: %d (%d win / %d loss) · Win rate: %.0f%% · Final PnL: %s USDT",
 		r.State.TradesClosed, r.Wins, r.Losses, r.WinRatePct, r.State.RealizedPnL.String())
 	return b.String()

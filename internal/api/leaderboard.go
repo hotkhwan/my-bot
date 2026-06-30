@@ -98,6 +98,9 @@ func (s *Server) handleLeaderboard(c fiber.Ctx) error {
 	byStrat := map[string]*agg{}
 	byCoin := map[string]*agg{}
 	for _, r := range runs {
+		if !actionableGoalRun(r) {
+			continue
+		}
 		if r.Strategy != "" {
 			ensure(byStrat, r.Strategy).add(r)
 		}
@@ -130,10 +133,20 @@ func (s *Server) handleLeaderboard(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"strategies":  strategies,
 		"coins":       coins,
-		"total_runs":  len(runs),
+		"total_runs":  actionableRunCount(runs),
 		"note":        "Community paper performance — proven probability by real members' own styles, not a signal. Not financial advice.",
 		"paper_based": true,
 	})
+}
+
+func actionableRunCount(runs []GoalRun) int {
+	count := 0
+	for _, run := range runs {
+		if actionableGoalRun(run) {
+			count++
+		}
+	}
+	return count
 }
 
 func ensure(m map[string]*agg, key string) *agg {

@@ -284,7 +284,7 @@
       .flight .fpnl { margin-left: auto; font-family: var(--font-mono); font-weight: 600; }
       .fhash { font-family: var(--font-mono); font-size: 0.6rem; color: var(--muted); padding-bottom: 0.5rem; border-bottom: 1px solid #ffffff14; }
       .fhash:last-child { border-bottom: 0; }
-      .hidden { display: none; }
+      .hidden { display: none !important; }
       .flow-step { display:flex; align-items:center; gap:0.55rem; margin-bottom:0.35rem; }
       .flow-no { display:inline-flex; align-items:center; justify-content:center; width:1.55rem; height:1.55rem; border-radius:50%; background:rgba(0,245,255,.12); border:1px solid var(--card-border); color:var(--primary); font:700 .75rem var(--font-mono); }
       .mission-actions { display:flex; gap:.55rem; margin-top:.8rem; }
@@ -1302,6 +1302,7 @@
       function goalMsg(t, ok) { $("g-msg").textContent = t || ""; $("g-msg").style.color = ok ? "var(--profit)" : "var(--loss)"; }
       let pendingMission = null;
       let activeMission = JSON.parse(localStorage.getItem("activeMission") || "null");
+      let lastGoalStats = null;
       function durationMs(v) {
         const m = /^(\d+)(m|h|w)$/.exec(v || "");
         if (!m) return 0;
@@ -1315,8 +1316,15 @@
         box.classList.remove("hidden");
       }
       function fmtPnl(v) { const n = Number(v) || 0; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100); }
+      function goalNeedsEdit(st) {
+        return !!(st && (st.needs_plan_edit || Number(st.trades || 0) === 0));
+      }
+      function canLaunchGoal(st) {
+        return !!(st && !goalNeedsEdit(st) && (st.actionable === true || Number(st.trades || 0) > 0) && st.verdict === "target_reached");
+      }
       function verdictText(v, st) {
-        if ((st && st.strategy || "").startsWith("anny_basic") && Number((st && st.trades) || 0) === 0) return "No CDC/QQE setup in this validation window";
+        if (st && st.blocked_reason) return "Edit plan: " + st.blocked_reason;
+        if ((st && st.strategy || "").startsWith("anny_basic") && Number((st && st.trades) || 0) === 0) return "Edit plan: No CDC/QQE setup in this validation window";
         return ({ target_reached: "🎯 Target reached", max_drawdown: "🛑 Stopped: capital risk limit", max_trades: "⏹ Stopped: max trades", continue: "Target not reached in this window" })[v] || v || "";
       }
       // bcardSpark draws a Binance-style area sparkline (line + soft fill), green
@@ -1334,6 +1342,7 @@
       }
       function renderGoalResult(d, request) {
         const st = d.stats || {};
+        lastGoalStats = st;
         const pnl = Number(st.realized_pnl || 0), up = pnl >= 0;
         const cap = Number(st.capital || 100) || 100;
         const roi = (pnl / cap) * 100;
@@ -1348,6 +1357,7 @@
         const cells = [
           ["Win rate", (Math.round((st.win_rate_pct || 0) * 10) / 10) + "%", ""],
           ["Trades", String(st.trades || 0), ""],
+          ["Est. entries", String(st.estimated_entries || "—"), ""],
           ["W / L", (st.wins || 0) + " / " + (st.losses || 0), ""],
           ["Target hit", st.verdict === "target_reached" ? "Yes" : "No", st.verdict === "target_reached" ? "up" : "down"],
           ["Validation", st.validation_window || st.duration || "—", ""],
@@ -1360,18 +1370,31 @@
         $("bc-verdict").textContent = verdictText(st.verdict, st);
         $("g-card").classList.remove("hidden");
         $("g-review-actions").classList.remove("hidden");
-        $("g-live").classList.toggle("hidden", st.verdict !== "target_reached");
+        const launchable = canLaunchGoal(st);
+        $("g-live").classList.toggle("hidden", !launchable);
+        $("g-live").disabled = !launchable;
+        if (goalNeedsEdit(st)) {
+          const aiNote = d.ai ? " " + d.ai : "";
+          goalMsg((st.blocked_reason || "No actionable setup in this validation window") + ". Edit the plan before Launch & confirm." + aiNote, false);
+          $("g-confirm-out").classList.add("hidden");
+          $("g-confirm-actions").classList.add("hidden");
+          pendingMission = null; missionConfirmId = null;
+        }
         const trades = d.trades || [];
         $("g-trades").innerHTML = trades.length
           ? trades.map((t) => `<div class="trade"><span class="tside ${t.side === "long" ? "up" : "down"}">${escapeHtml(t.side)}</span><span style="color:var(--muted)">${escapeHtml(t.outcome)}</span><span class="tpnl ${Number(t.pnl) >= 0 ? "up" : "down"}">${fmtPnl(t.pnl)}</span></div>`).join("")
           : "<p style='font-size:0.85rem'>No trades.</p>";
         $("g-tradeswrap").classList.toggle("hidden", trades.length === 0);
-        if (d.ai) goalMsg(d.ai, true);
+        if (d.ai && !goalNeedsEdit(st)) goalMsg(d.ai, true);
       }
       async function runGoal() {
         goalMsg("Running on real candles…", true);
         $("g-run").disabled = true;
         $("g-review-actions").classList.add("hidden");
+        $("g-live").classList.add("hidden");
+        $("g-confirm-out").classList.add("hidden");
+        $("g-confirm-actions").classList.add("hidden");
+        pendingMission = null; missionConfirmId = null; lastGoalStats = null;
         const body = {
           profit: $("g-profit").value, capital: $("g-capital").value,
           capital_risk_pct: parseInt($("g-risk").value, 10) || 5, leverage_use_pct: parseInt($("g-leverage").value, 10) || 25, symbol: $("g-symbol").value,
@@ -1390,6 +1413,11 @@
       $("g-run").onclick = runGoal;
       $("g-edit").onclick = () => { $("g-profit").focus(); $("view-orders").scrollIntoView({ behavior:"smooth", block:"start" }); };
       async function runLiveMission() {
+        if (!canLaunchGoal(lastGoalStats)) {
+          goalMsg(((lastGoalStats && lastGoalStats.blocked_reason) || "Paper assessment is not launch-ready") + ". Edit the plan and assess again.", false);
+          $("g-edit").focus();
+          return;
+        }
         if (!confirm("Run a LIVE testnet Mission? ANNY will propose a real order on your active key — you still press Confirm before it places.")) return;
         goalMsg("Preparing live Mission…", true);
         $("g-live").disabled = true;

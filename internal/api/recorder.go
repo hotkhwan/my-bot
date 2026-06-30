@@ -119,6 +119,9 @@ func (s *Server) handleRecorder(c fiber.Ctx) error {
 		runs, err := s.goalRuns.List(c.Context(), userKey, recorderMaxEntries)
 		if err == nil {
 			for _, r := range runs {
+				if !actionableGoalRun(r) {
+					continue
+				}
 				win := false
 				if v, perr := strconv.ParseFloat(r.RealizedPnL, 64); perr == nil {
 					win = v > 0
