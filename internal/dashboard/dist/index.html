@@ -512,6 +512,9 @@
             <button class="primary" id="g-confirm-yes">Confirm mission</button>
             <button class="ghost" id="g-confirm-no">Cancel</button>
           </div>
+          <div id="g-armed-actions" class="actions hidden">
+            <button class="ghost" id="g-disarm">Disarm</button>
+          </div>
           <div class="flow-step" style="margin-top:1rem"><span class="flow-no">4</span><strong>Live monitor <span style="color:var(--muted);font-weight:400;font-size:0.8rem">· testnet</span></strong></div>
           <div id="live-summary" class="live-summary hidden"></div>
           <div id="positions">No open position.</div>
@@ -871,7 +874,7 @@
         ["home", "orders", "history", "community", "settings", "login"].forEach((v) => $("view-" + v).classList.toggle("hidden", v !== name));
         document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === name));
         if (name === "home") { loadHome(); startHomePolling(); } else { stopHomePolling(); }
-        if (name === "orders") { refreshKeyStatus(); loadGoalHistory(); loadLeaderboard(); startPositionsPolling(); } else { stopPositionsPolling(); }
+        if (name === "orders") { refreshKeyStatus(); loadGoalHistory(); loadLeaderboard(); loadArmedMissions(); startPositionsPolling(); } else { stopPositionsPolling(); }
         if (name === "history") { loadRecorder(); loadHistory(); }
         if (name === "community") loadLeaderboard();
         if (name === "settings") refreshKeyStatus();
@@ -927,7 +930,6 @@
       $("logout").onclick = () => {
         localStorage.removeItem("token");
         localStorage.removeItem("profile");
-        if (stream) { stream.close(); stream = null; }
         stopPricePolling();
         me = null;
         // Reset the URL back to the landing page too, so logout actually bounces to
@@ -1310,6 +1312,7 @@
       // ---- goal (paper backtest on real data) ----
       function goalMsg(t, ok) { $("g-msg").textContent = t || ""; $("g-msg").style.color = ok ? "var(--profit)" : "var(--loss)"; }
       let pendingMission = null;
+      let armedMissionId = null;
       let activeMission = JSON.parse(localStorage.getItem("activeMission") || "null");
       let lastGoalStats = null;
       function durationMs(v) {
@@ -1323,6 +1326,28 @@
         const stamp = new Date().toLocaleTimeString();
         box.textContent = `[${stamp}] ${text}\n\n` + box.textContent;
         box.classList.remove("hidden");
+      }
+      function setArmedState(armed, output) {
+        armedMissionId = armed && armed.id ? armed.id : null;
+        if (output) {
+          $("g-confirm-out").textContent = output;
+          $("g-confirm-out").classList.remove("hidden");
+        }
+        $("g-armed-actions").classList.toggle("hidden", !armedMissionId);
+        $("g-confirm-actions").classList.add("hidden");
+        if (armedMissionId && armed) {
+          const exp = armed.expires_at ? new Date(armed.expires_at) : null;
+          const when = exp && !isNaN(exp.getTime()) ? " · expires " + exp.toLocaleTimeString() : "";
+          addMissionActivity(`Armed ${armed.symbol || ""}${when}`);
+        }
+      }
+      async function loadArmedMissions() {
+        try {
+          const d = await (await fetch("/api/mission/armed", { headers: authHeaders() })).json();
+          const active = (d.armed || []).find((m) => m.status === "armed");
+          if (!active || armedMissionId) return;
+          setArmedState(active, `Armed — waiting for an ANNY Basic setup on ${active.symbol}.`);
+        } catch (e) {}
       }
       function fmtPnl(v) { const n = Number(v) || 0; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100); }
       function goalNeedsEdit(st) {
@@ -1442,7 +1467,8 @@
           goalMsg(planEditReason(st) + ". Edit the plan before Launch & confirm." + hintNote + aiNote, false);
           $("g-confirm-out").classList.add("hidden");
           $("g-confirm-actions").classList.add("hidden");
-          pendingMission = null; missionConfirmId = null;
+          $("g-armed-actions").classList.add("hidden");
+          pendingMission = null; missionConfirmId = null; armedMissionId = null;
         }
         const trades = d.trades || [];
         $("g-trades").innerHTML = trades.length
@@ -1460,7 +1486,8 @@
         $("g-try-rsi").classList.add("hidden");
         $("g-confirm-out").classList.add("hidden");
         $("g-confirm-actions").classList.add("hidden");
-        pendingMission = null; missionConfirmId = null; lastGoalStats = null;
+        $("g-armed-actions").classList.add("hidden");
+        pendingMission = null; missionConfirmId = null; armedMissionId = null; lastGoalStats = null;
         const body = {
           profit: $("g-profit").value, capital: $("g-capital").value,
           capital_risk_pct: parseInt($("g-risk").value, 10) || 5, leverage_use_pct: parseInt($("g-leverage").value, 10) || 25, symbol: $("g-symbol").value,
@@ -1487,7 +1514,7 @@
           $("g-edit").focus();
           return;
         }
-        if (!confirm("Run a LIVE testnet Mission? ANNY will propose a real order on your active key — you still press Confirm before it places.")) return;
+        if (!confirm("Run a LIVE testnet Mission? If no setup is live, ANNY can arm the plan to wait inside this window. Testnet only.")) return;
         goalMsg("Preparing live Mission…", true);
         $("g-live").disabled = true;
         const body = { symbol: $("g-symbol").value, capital: $("g-capital").value, capital_risk_pct: parseInt($("g-risk").value, 10) || 5, leverage_use_pct: parseInt($("g-leverage").value, 10) || 25, strategy: $("g-strategy").value, duration: $("g-duration").value, use_ai: $("g-ai").checked };
@@ -1500,8 +1527,9 @@
           // Show the order + Confirm right here under the button, not in the chat box.
           $("g-confirm-out").textContent = d.output || ""; $("g-confirm-out").classList.remove("hidden");
           pendingMission = d.mission || null;
-          if (d.confirm_id) { missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); }
-          else $("g-confirm-actions").classList.add("hidden");
+          if (d.armed) { setArmedState(d.armed, d.output || "Armed — waiting for setup."); }
+          else if (d.confirm_id) { missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); $("g-armed-actions").classList.add("hidden"); }
+          else { $("g-confirm-actions").classList.add("hidden"); $("g-armed-actions").classList.add("hidden"); }
           $("live-card").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (e) { goalMsg("Network error"); }
         finally { $("g-live").disabled = false; }
@@ -1530,6 +1558,20 @@
       }
       $("g-confirm-yes").onclick = () => resolveMission(false);
       $("g-confirm-no").onclick = () => resolveMission(true);
+      async function disarmMission() {
+        if (!armedMissionId) return;
+        const id = armedMissionId;
+        $("g-disarm").disabled = true;
+        try {
+          const d = await (await fetch("/api/mission/disarm", { method: "POST", headers: authHeaders(), body: JSON.stringify({ id }) })).json();
+          $("g-confirm-out").textContent = d.output || d.error || "Disarmed.";
+          addMissionActivity(d.output || "Disarmed.");
+          armedMissionId = null;
+          $("g-armed-actions").classList.add("hidden");
+        } catch (e) { $("g-confirm-out").textContent = "Network error"; }
+        finally { $("g-disarm").disabled = false; }
+      }
+      $("g-disarm").onclick = disarmMission;
       // ---- live positions (the user's own testnet account) ----
       async function loadPositions() {
         const box = $("positions"); if (!box) return;

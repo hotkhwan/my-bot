@@ -111,10 +111,7 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid JSON body"})
 	}
 	symbol := normalizeSymbol(req.Symbol)
-	spec, ok := allowedDurations[strings.ToLower(strings.TrimSpace(req.Duration))]
-	if !ok {
-		spec = allowedDurations["1h"]
-	}
+	durationKey, spec := missionSpecFor(req.Duration)
 	interval := spec.ExecutionInterval
 	strategyName := "ema"
 	switch req.Strategy {
@@ -144,7 +141,7 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "could not assess ANNY Basic setup for " + symbol})
 		}
 		if decision.Stop || decision.Side == annybasic.SideNone {
-			return c.JSON(fiber.Map{"output": "🤖 No ANNY Basic setup right now — " + decision.Reason + ". Paper and live are aligned, so no testnet order is staged."})
+			return s.armANNYBasicMission(c, req, userID, symbol, decision.Reason)
 		}
 		side = string(decision.Side)
 		reason = annybasic.ID + " v" + annybasic.Version + " · " + decision.Reason
@@ -199,7 +196,7 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 	}
 	s.timedMissions.Store(confirmation.ID, timedMission{
-		UserID: userID, Symbol: symbol, Duration: planDuration(req.Duration),
+		UserID: userID, Symbol: symbol, Duration: planDuration(durationKey),
 	})
 	s.usage.Incr(claimsOf(c).Subject, "mission") // count the attempt toward the daily limit
 	return c.JSON(fiber.Map{
@@ -208,12 +205,15 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 		"mission": fiber.Map{
 			"symbol": symbol, "side": side, "entry": trimPrice(entry),
 			"stop_loss": trimPrice(sl), "take_profit": trimPrice(tp),
-			"leverage": leverage, "duration": req.Duration, "size_usdt": strconv.FormatFloat(size, 'f', 2, 64),
+			"leverage": leverage, "duration": durationKey, "size_usdt": strconv.FormatFloat(size, 'f', 2, 64),
 		},
 	})
 }
 
 func (s *Server) annyBasicLiveDecision(ctx context.Context, symbol string, executionCandles []marketdata.Candle) (annybasic.Decision, error) {
+	if s.annyBasicDecider != nil {
+		return s.annyBasicDecider(ctx, symbol, executionCandles)
+	}
 	mainCandles, err := s.market.Candles(ctx, symbol, "15m", 200)
 	if err != nil {
 		return annybasic.Decision{}, err

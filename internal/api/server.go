@@ -56,28 +56,32 @@ type eventStream interface {
 }
 
 type Server struct {
-	cfg           config.Config
-	processor     *signals.Processor
-	users         *users.Service
-	interest      *interest.Service
-	email         appemail.Sender
-	report        *journal.Service
-	tokenizer     *auth.Tokenizer
-	credentials   *auth.CredentialService
-	stream        eventStream
-	market        *marketdata.BinanceProvider
-	orders        *orders.Service
-	parser        parser.Parser
-	advisor       signals.Advisor
-	goalRuns      GoalRunStore
-	access        AccessStore
-	aiSecrets     AISecretStore
-	favourites    FavouritesStore
-	keyring       *auth.Keyring
-	usage         *memUsage
-	timedMissions sync.Map // confirmation id -> timedMission; dev/testnet only
-	logger        *slog.Logger
-	app           *fiber.App
+	cfg              config.Config
+	processor        *signals.Processor
+	users            *users.Service
+	interest         *interest.Service
+	email            appemail.Sender
+	report           *journal.Service
+	tokenizer        *auth.Tokenizer
+	credentials      *auth.CredentialService
+	stream           eventStream
+	market           *marketdata.BinanceProvider
+	orders           *orders.Service
+	parser           parser.Parser
+	advisor          signals.Advisor
+	goalRuns         GoalRunStore
+	access           AccessStore
+	armedMissions    ArmedMissionStore
+	aiSecrets        AISecretStore
+	favourites       FavouritesStore
+	keyring          *auth.Keyring
+	usage            *memUsage
+	annyBasicDecider annyBasicDecisionFunc
+	timedMissions    sync.Map // confirmation id -> timedMission; dev/testnet only
+	armedWatchers    sync.Map // armed mission id -> struct{}; phase-A observe-only watchers
+	runtimeCtx       context.Context
+	logger           *slog.Logger
+	app              *fiber.App
 }
 
 // Option customises a Server without breaking existing call sites.
@@ -143,6 +147,12 @@ func WithAccessStore(store AccessStore) Option {
 	return func(s *Server) { s.access = store }
 }
 
+// WithArmedMissionStore persists armed missions so wait-for-setup state survives
+// restarts. When unset, NewServer installs an in-memory store for local/tests.
+func WithArmedMissionStore(store ArmedMissionStore) Option {
+	return func(s *Server) { s.armedMissions = store }
+}
+
 // WithFavourites persists per-user favourite coins so they follow the user
 // across clients (web + Telegram mini app), not just one device's localStorage.
 func WithFavourites(store FavouritesStore) Option {
@@ -179,6 +189,9 @@ func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Log
 	if server.access == nil {
 		server.access = newMemAccess()
 	}
+	if server.armedMissions == nil {
+		server.armedMissions = newMemArmedMissions()
+	}
 	if server.aiSecrets == nil {
 		server.aiSecrets = newMemAISecrets()
 	}
@@ -196,7 +209,15 @@ func (s *Server) App() *fiber.App {
 	return s.app
 }
 
+func (s *Server) runtimeContext() context.Context {
+	return s.runtimeCtx
+}
+
 func (s *Server) Run(ctx context.Context) error {
+	s.runtimeCtx = ctx
+	if n := s.startArmedMissionWatchers(ctx); n > 0 {
+		s.logger.Info("armed missions rehydrated", "count", n)
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -248,6 +269,8 @@ func (s *Server) routes() {
 	s.app.Get("/api/positions", s.requireAuth, s.handleGetPositions)
 	s.app.Post("/api/positions/close", s.requireAuth, s.handleClosePosition)
 	s.app.Post("/api/mission/prepare", s.requireAuth, s.handleMissionPrepare)
+	s.app.Get("/api/mission/armed", s.requireAuth, s.handleArmedMissions)
+	s.app.Post("/api/mission/disarm", s.requireAuth, s.handleDisarmMission)
 	s.app.Post("/api/goal/run", s.requireAuth, s.handleGoalRun)
 	s.app.Get("/api/goal/history", s.requireAuth, s.handleGoalHistory)
 	s.app.Get("/api/recorder", s.requireAuth, s.handleRecorder)

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ANNY Basic — Model Card (v1.2)</title>
+<style>
+  :root{
+    --bg:#0a0e14; --card:#121826; --border:#1f2a3a; --primary:#00f5ff;
+    --text:#e6edf3; --muted:#8b97a8; --green:#2ebd85; --red:#f6465d;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans);
+    padding:2rem 1rem;}
+  .wrap{max-width:880px;margin:0 auto}
+  header{border-bottom:1px solid var(--border);padding-bottom:1.2rem;margin-bottom:1.6rem}
+  .badge{display:inline-block;font:700 .7rem var(--mono);letter-spacing:.05em;
+    color:var(--primary);border:1px solid var(--border);border-radius:999px;
+    padding:.25rem .7rem;background:rgba(0,245,255,.08)}
+  h1{font-size:1.8rem;margin:.6rem 0 .3rem}
+  h2{font-size:1.15rem;margin:2rem 0 .6rem;color:var(--primary)}
+  .sub{color:var(--muted);font-size:.92rem}
+  .note{background:var(--card);border:1px solid var(--border);border-left:3px solid var(--primary);
+    border-radius:10px;padding:.9rem 1.1rem;margin:1rem 0;color:var(--muted)}
+  .note strong{color:var(--text)}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+    padding:1rem 1.2rem;margin:1rem 0}
+  table{width:100%;border-collapse:collapse;margin:.6rem 0;font-size:.92rem}
+  th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.03em}
+  code,.mono{font-family:var(--mono);font-size:.88em}
+  .pill{display:inline-block;border-radius:6px;padding:.05rem .45rem;font:600 .8rem var(--mono)}
+  .long{background:rgba(46,189,133,.15);color:var(--green)}
+  .short{background:rgba(246,70,93,.15);color:var(--red)}
+  ul{margin:.4rem 0;padding-left:1.2rem} li{margin:.25rem 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  @media(max-width:620px){.grid2{grid-template-columns:1fr}}
+  .muted{color:var(--muted)} .green{color:var(--green)} .red{color:var(--red)}
+  footer{margin-top:2.5rem;padding-top:1.2rem;border-top:1px solid var(--border);
+    color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="badge">ANNY · MODEL CARD</span>
+    <h1>ANNY Basic <span class="muted mono" style="font-size:1rem">v1.2</span></h1>
+    <p class="sub">Transparent by design — this shows <em>what the model does and how it is judged</em>, not a secret formula. ANNY Basic is the public, conservative paper strategy. Not financial advice · No guaranteed profit.</p>
+  </header>
+
+  <div class="note"><strong>Source of truth:</strong> <code>internal/strategy/annybasic/</code> (model) · <code>internal/campaign/paper.go</code> (paper engine) · <code>internal/api/goal.go</code> (launch gate).</div>
+
+  <h2>1 · What it is</h2>
+  <p>A <strong>risk-first</strong> entry/stop policy. It never places orders by itself — it proposes a side; <strong>the user confirms</strong>. It is intentionally selective: it would rather take <em>no</em> trade than a low-quality one.</p>
+
+  <h2>2 · Entry logic — when it takes a side</h2>
+  <div class="card">
+  <table>
+    <tr><th>Side</th><th>CDC Action Zone (15m)</th><th>QQE value</th><th>QQE cross</th></tr>
+    <tr><td><span class="pill long">LONG</span></td><td class="green">Green</td><td>&gt; 50</td><td>Cross up</td></tr>
+    <tr><td><span class="pill short">SHORT</span></td><td class="red">Red</td><td>&lt; 50</td><td>Cross down</td></tr>
+  </table>
+  <p class="muted" style="margin:.3rem 0 0">Anything else → <strong>no trade</strong> ("CDC and QQE are not aligned").</p>
+  </div>
+  <p><strong>No-trade gates</strong> (checked first, in fixed order) — this is <em>why setups are sparse</em>:</p>
+  <ul>
+    <li>Abnormal volatility → blocked</li>
+    <li>Sideways market → blocked</li>
+    <li>Entry extended from trend → blocked (don't chase)</li>
+    <li>Execution not aligned → blocked</li>
+  </ul>
+
+  <h2>3 · Phases &amp; leverage</h2>
+  <div class="card">
+  <table>
+    <tr><th>Phase</th><th>Trades closed</th><th>Model leverage request</th></tr>
+    <tr><td>Fast</td><td>0–2</td><td>50× (100× only if momentum confirmed)</td></tr>
+    <tr><td>Normal</td><td>3–9</td><td>50× (100× only if momentum confirmed)</td></tr>
+    <tr><td>Defensive</td><td>10+</td><td>50× (capped, no boost)</td></tr>
+  </table>
+  <p class="muted" style="margin:.3rem 0 0">The platform/user leverage ceiling <strong>always wins</strong> over the model's request. Leverage is never set by <code>capital_risk_pct</code>.</p>
+  </div>
+
+  <h2>4 · Campaign stops — why it makes <em>few</em> trades</h2>
+  <p>The mission halts on the <strong>first</strong> of these (it does <strong>not</strong> force a trade count):</p>
+  <ul>
+    <li>🎯 <strong>Profit target reached</strong> → stop as success</li>
+    <li>✋ <strong>2 consecutive losses</strong> → stop (no revenge trading / no open-ended martingale)</li>
+    <li>⏹ <strong>15-trade hard cap</strong> → stop</li>
+  </ul>
+  <div class="note">A healthy ANNY Basic mission can legitimately be <strong>2–4 trades</strong>. That is by design.</div>
+
+  <h2>5 · Paper engine — how a /goal run is scored</h2>
+  <p>A <code>/goal</code> run is a <strong>paper simulation on real Binance candles</strong> — no orders, no money — resolving each trade from real intrabar highs/lows.</p>
+  <ul>
+    <li><strong>Reward : Risk = 2 : 1</strong>, fixed (a 1:1 bracket is never traded).</li>
+    <li><strong>Position size</strong> comes from the <strong>Leverage use %</strong> slider (decimal math; per-trade risk clamped to 20% of capital and to remaining drawdown).</li>
+    <li><code>capital_risk_pct</code> = the <em>cumulative</em> plan-loss ceiling only — never leverage.</li>
+    <li><strong>Fees</strong> (entry + exit) are deducted from every trade.</li>
+    <li><strong>Edge / trade</strong> = realized PnL ÷ trades (fees included) — the RR-adjusted edge.</li>
+  </ul>
+
+  <h2>6 · "Launch ready" gate — what unlocks <span class="mono" style="color:var(--primary)">Next →</span></h2>
+  <p>A paper result is <strong>launch ready</strong> when it shows a real edge, not a 1-trade fluke. Two ways to qualify — both require <strong>positive realized PnL</strong> and <strong>≥ 2 trades</strong>:</p>
+  <div class="card">
+  <table>
+    <tr><th>Path</th><th>Condition</th></tr>
+    <tr><td>Target hit</td><td>Verdict = <code>target_reached</code> → launch ready (even with just 2 trades — hitting the goal <em>is</em> the proof)</td></tr>
+    <tr><td>Positive edge, no target</td><td>Didn't reach target, but proved positive edge over <strong>≥ 5 trades</strong></td></tr>
+  </table>
+  </div>
+  <div class="note"><strong>There is no "must make 5 trades" rule.</strong> The 5-trade floor applies <em>only</em> to runs that did <strong>not</strong> reach their target. A sparse ANNY Basic plan that hits its target in 2 winning trades is launch ready. (Launching to testnet still needs an active Binance key — the real-trading guard.)</div>
+  <p class="muted">Why win rate alone isn't the gate: at <strong>RR 2:1</strong> the break-even win rate is <strong>33%</strong>, so a high-RR plan can be profitable below 50% — the gate uses <em>expectancy</em>, not win rate.</p>
+
+  <h2>7 · Transparency boundary</h2>
+  <div class="grid2">
+    <div class="card"><strong class="green">Public (verifiable)</strong><ul><li>The mechanism on this page</li><li>Every paper result, RR, edge</li><li>Hashes / Flight Recorder</li></ul></div>
+    <div class="card"><strong class="muted">Private (proprietary)</strong><ul><li>The live model's tuned parameters / weights</li><li>Kept in secrets, exposed only as results</li></ul></div>
+  </div>
+
+  <footer>
+    ANNY Basic is an educational, risk-first automation model. Results are simulated on historical data and are <strong>not</strong> a prediction, signal, or guarantee of future profit. The user always confirms execution. This is not financial advice.
+  </footer>
+</div>
+</body>
+</html>

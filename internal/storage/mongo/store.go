@@ -26,6 +26,7 @@ type Store struct {
 	journalTrades *mongodriver.Collection
 	credentials   *mongodriver.Collection
 	goalRuns      *mongodriver.Collection
+	armedMissions *mongodriver.Collection
 	access        *mongodriver.Collection
 	aiKeys        *mongodriver.Collection
 	favourites    *mongodriver.Collection
@@ -47,6 +48,12 @@ func (s *Store) FavouritesCollection() *mongodriver.Collection {
 // layer's record type.
 func (s *Store) GoalRunsCollection() *mongodriver.Collection {
 	return s.goalRuns
+}
+
+// ArmedMissionsCollection exposes the armed_missions collection for the app
+// adapter. This keeps storage free of the API package's record type.
+func (s *Store) ArmedMissionsCollection() *mongodriver.Collection {
+	return s.armedMissions
 }
 
 // AccessCollection exposes the crew-access approvals collection.
@@ -85,6 +92,7 @@ func Connect(ctx context.Context, cfg Config) (*Store, error) {
 		journalTrades: db.Collection("journal_trades"),
 		credentials:   db.Collection("binance_credentials"),
 		goalRuns:      db.Collection("goal_runs"),
+		armedMissions: db.Collection("armed_missions"),
 		access:        db.Collection("crew_access"),
 		aiKeys:        db.Collection("ai_keys"),
 		favourites:    db.Collection("favourites"),
@@ -184,6 +192,40 @@ func (s *Store) ensureIndexes(ctx context.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("create goal run indexes: %w", err)
+	}
+
+	_ = s.armedMissions.Indexes().DropOne(ctx, "armed_expires_at_ttl")
+	_, err = s.armedMissions.Indexes().CreateMany(ctx, []mongodriver.IndexModel{
+		{
+			Keys: bson.D{
+				{Key: "user_key", Value: 1},
+				{Key: "created_at", Value: -1},
+			},
+			Options: options.Index().SetName("armed_user_created_at"),
+		},
+		{
+			Keys: bson.D{
+				{Key: "status", Value: 1},
+				{Key: "expires_at", Value: 1},
+			},
+			Options: options.Index().SetName("armed_status_expires_at"),
+		},
+		{
+			Keys: bson.D{{Key: "purge_at", Value: 1}},
+			Options: options.Index().
+				SetName("armed_purge_at_ttl").
+				SetExpireAfterSeconds(0),
+		},
+		{
+			Keys: bson.D{{Key: "idempotency_key", Value: 1}},
+			Options: options.Index().
+				SetName("armed_idempotency_key_unique").
+				SetUnique(true).
+				SetSparse(true),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create armed mission indexes: %w", err)
 	}
 
 	_, err = s.signals.Indexes().CreateMany(ctx, []mongodriver.IndexModel{
