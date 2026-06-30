@@ -466,7 +466,7 @@
             </div>
             <div class="grid2">
               <div><label for="g-symbol">Symbol <span class="ibadge" data-info="Symbol-specific limits are checked again before execution.">ⓘ</span></label><select id="g-symbol"><option value="BTC">BTC</option></select></div>
-              <div><label for="g-duration">Plan duration <span class="ibadge" data-info="How long this plan may open positions. A smaller execution timeframe is selected automatically.">ⓘ</span></label><select id="g-duration"><option value="15m">15m · dev</option><option value="1h" selected>1h</option><option value="2h">2h</option><option value="4h">4h</option><option value="8h">8h</option><option value="12h">12h</option><option value="24h">24h</option><option value="48h">48h</option><option value="1w">1 week</option></select></div>
+              <div><label for="g-duration">Plan duration <span class="ibadge" data-info="How long this plan may open positions. A smaller execution timeframe is selected automatically.">ⓘ</span></label><select id="g-duration"><option value="unlimited" selected>∞ until target / stop</option><option value="15m">15m · dev</option><option value="1h">1h</option><option value="2h">2h</option><option value="4h">4h</option><option value="8h">8h</option><option value="12h">12h</option><option value="24h">24h</option><option value="48h">48h</option><option value="1w">1 week</option></select></div>
             </div>
             <label for="g-strategy">Strategy</label><select id="g-strategy"><option value="auto">✨ Auto (mix strategies)</option><option value="anny_basic">ANNY Basic v1.2</option><option value="ema">EMA cross</option><option value="rsi">RSI reversion</option><option value="macd">MACD</option><option value="sma">SMA cross</option><option value="breakout">Breakout</option></select>
             <label class="gai"><input type="checkbox" id="g-ai" checked /> Let AI pick the side (per run)</label>
@@ -494,8 +494,8 @@
             <div class="bcard-grid" id="bc-stats"></div>
             <div class="bcard-foot" id="bc-verdict"></div>
             <div id="g-review-actions" class="mission-actions hidden">
-              <button class="primary" id="g-live" type="button">Launch testnet mission →</button>
-              <button class="ghost" id="g-edit" type="button">Edit plan</button>
+              <button class="primary" id="g-live" type="button">Next →</button>
+              <button class="ghost" id="g-edit" type="button">Update plan</button>
               <button class="ghost hidden" id="g-try-auto" type="button">Try Auto</button>
               <button class="ghost hidden" id="g-try-rsi" type="button">Try RSI</button>
             </div>
@@ -929,6 +929,10 @@
         localStorage.removeItem("profile");
         if (stream) { stream.close(); stream = null; }
         stopPricePolling();
+        me = null;
+        // Reset the URL back to the landing page too, so logout actually bounces to
+        // the first page instead of leaving the address bar on a deep view.
+        history.replaceState({}, "", "/");
         $("nav").classList.add("hidden");
         $("logout").classList.add("hidden");
         $("who").classList.add("hidden");
@@ -1325,8 +1329,20 @@
         return !!(st && (st.needs_plan_edit || Number(st.trades || 0) === 0));
       }
       function canLaunchGoal(st) {
-        return !!(st && !goalNeedsEdit(st) && (st.actionable === true || Number(st.trades || 0) > 0) && st.verdict === "target_reached");
+        // Launch on a genuine RR-adjusted edge, not a lucky $-target hit: the server
+        // flags `launchable` when the plan ran a meaningful sample with positive
+        // realized expectancy. A high-RR plan can launch below 50% win rate; a
+        // 2-trade fluke cannot.
+        return !!(st && !goalNeedsEdit(st) && st.launchable === true);
       }
+      function launchBlockReason(st) {
+        const trades = Number((st && st.trades) || 0);
+        if (trades < 5) return `Need ≥5 paper trades for a reliable edge — only ${trades} so far. Try a longer duration or another symbol.`;
+        return "Edge is not positive over this sample (expectancy ≤ 0). Update the plan or try another symbol, then reassess.";
+      }
+      // expFmt/expCls render realized expectancy per trade (the RR-adjusted edge).
+      function expFmt(v) { const n = Number(v); if (v === "" || v == null || !isFinite(n)) return "—"; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100) + " USDT"; }
+      function expCls(v) { const n = Number(v); if (v === "" || v == null || !isFinite(n)) return ""; return n > 0 ? "up" : "down"; }
       function planEditReason(st) {
         return (st && st.blocked_reason) || "No actionable setup in this validation window";
       }
@@ -1394,10 +1410,12 @@
           ["Leverage use", (st.leverage_use_pct || 0) + "%", ""],
         ] : [
           ["Win rate", (Math.round((st.win_rate_pct || 0) * 10) / 10) + "%", ""],
+          ["RR", st.reward_risk ? ("1 : " + st.reward_risk) : "—", "up"],
+          ["Edge / trade", expFmt(st.expectancy_per_trade), expCls(st.expectancy_per_trade)],
           ["Trades", String(st.trades || 0), ""],
-          ["Entries needed", String(st.estimated_entries || "—"), ""],
           ["W / L", (st.wins || 0) + " / " + (st.losses || 0), ""],
-          ["Target hit", st.verdict === "target_reached" ? "Yes" : "No", st.verdict === "target_reached" ? "up" : "down"],
+          ["Launch ready", canLaunchGoal(st) ? "Yes" : "No", canLaunchGoal(st) ? "up" : "down"],
+          ["Entries needed", String(st.estimated_entries || "—"), ""],
           ["Validation", st.validation_window || st.duration || "—", ""],
           ["Capital", cap + " USDT", ""],
           ["Target", (st.profit_target || "0") + " USDT", ""],

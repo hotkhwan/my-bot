@@ -62,6 +62,9 @@ type GoalRun struct {
 	Validation       string    `json:"validation_window" bson:"validation_window"`
 	EstimatedEntries int       `json:"estimated_entries" bson:"estimated_entries"`
 	SignalSetups     int       `json:"signal_setups" bson:"signal_setups"`
+	ExpectancyUSDT   string    `json:"expectancy_per_trade" bson:"expectancy_per_trade"`
+	RewardRisk       string    `json:"reward_risk" bson:"reward_risk"`
+	Launchable       bool      `json:"launchable" bson:"launchable"`
 	Actionable       bool      `json:"actionable" bson:"actionable"`
 	NeedsPlanEdit    bool      `json:"needs_plan_edit" bson:"needs_plan_edit"`
 	BlockedReason    string    `json:"blocked_reason,omitempty" bson:"blocked_reason,omitempty"`
@@ -101,6 +104,18 @@ const (
 	annyBasicPaperExecutionBars = 10080 // 7 days of 1m candles; ANNY Basic setups are intentionally sparse.
 	annyBasicPaperMainBars      = 1000
 	goalAIDirectionalConfidence = 50
+	// minLaunchTrades is the smallest paper sample that may be called "launchable".
+	// A 1–2 trade window is luck, not edge: a plan must show positive realized
+	// expectancy over at least this many trades before the Next/launch step opens.
+	minLaunchTrades = 5
+	// unlimitedDuration runs the paper engine over a long recent window with no
+	// fixed plan timebox, resolving when the goal hits its profit target or its
+	// drawdown stop — whichever comes first — instead of stopping at an arbitrary
+	// duration. History is finite, so the window is capped at unlimitedPaperBars;
+	// if neither target nor stop is reached the verdict is "continue".
+	unlimitedDuration      = "unlimited"
+	unlimitedPaperBars     = 3000 // ~10 days at 5m; the provider paginates beyond 1000
+	unlimitedPaperInterval = "5m"
 )
 
 // handleGoalRun runs a paper goal over real candles and returns rich stats.
@@ -116,8 +131,9 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 	}
 	symbol := normalizeSymbol(req.Symbol)
 	duration := strings.ToLower(strings.TrimSpace(req.Duration))
+	unlimited := duration == unlimitedDuration || duration == "∞"
 	spec, ok := allowedDurations[duration]
-	if !ok {
+	if !ok && !unlimited {
 		duration = "1h"
 		spec = allowedDurations[duration]
 	}
@@ -127,6 +143,9 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 	if req.LeverageUsePct > 100 {
 		req.LeverageUsePct = 100
 	}
+	// The leverage-use slider sizes the per-trade bracket so an aggressive plan
+	// reaches its $ target in fewer trades; RR is preserved (reward = 2× risk).
+	goal = applyLeverageSizing(goal, req.LeverageUsePct)
 	interval := spec.ExecutionInterval
 	paperPlanBars := spec.PlanBars
 	validation := duration
@@ -136,6 +155,17 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 		strategy = req.Strategy
 	}
 	bars := spec.PlanBars + 40 // warmup + a small volatility lookback
+	if unlimited {
+		// Run open-ended: entries allowed on every bar after warmup, the max-trades
+		// cap removed, so the run stops only on target reached or drawdown — whichever
+		// comes first — across a long recent window.
+		duration = unlimitedDuration
+		interval = unlimitedPaperInterval
+		bars = unlimitedPaperBars
+		paperPlanBars = 0
+		validation = "until target or stop"
+		goal.MaxTrades = 0
+	}
 	if strategy == "anny_basic" {
 		// ANNY Basic uses sparse 15m CDC color changes plus QQE crosses. A 15m
 		// live plan may legitimately contain no setup, so paper assessment uses a
@@ -328,6 +358,38 @@ func buildGoal(req goalRequest) (campaign.Goal, error) {
 	return campaign.ParseGoal(text)
 }
 
+// applyLeverageSizing scales the goal's per-trade reward/risk by the leverage-use
+// slider so an aggressive plan reaches its $ target in fewer trades while a
+// conservative one keeps the original small bracket. The reward:risk multiple is
+// preserved (reward = 2× risk), so this changes position size, not the strategy's
+// edge — win rate and TP/SL geometry are untouched in the paper run. Per-trade
+// risk is clamped to 20% of capital and to the drawdown budget so no single trade
+// can reach the whole target or blow the stop in one shot.
+//
+// The slider maps linearly at 4 basis points of capital per percent: the default
+// 25% reproduces the legacy 1%-risk / 2%-reward bracket, 50% doubles it, 100%
+// quadruples it.
+func applyLeverageSizing(goal campaign.Goal, leverageUsePct int) campaign.Goal {
+	if leverageUsePct <= 0 || !goal.CapitalUSDT.IsPositive() {
+		return goal
+	}
+	riskBp := int64(leverageUsePct) * 4 // 25%→100bp(1%), 50%→200bp(2%), 100%→400bp(4%)
+	if riskBp > 2000 {                  // cap per-trade risk at 20% of capital
+		riskBp = 2000
+	}
+	risk, err := goal.CapitalUSDT.Mul(decimal.NewFromInt(riskBp)).QuoFloor(decimal.NewFromInt(10000), 8)
+	if err != nil || !risk.IsPositive() {
+		return goal
+	}
+	// One losing trade must never exceed the run's whole drawdown budget.
+	if goal.MaxDrawdownUSDT.IsPositive() && risk.Cmp(goal.MaxDrawdownUSDT) > 0 {
+		risk = goal.MaxDrawdownUSDT
+	}
+	goal.RiskPerTradeUSDT = risk
+	goal.RewardPerTradeUSDT = risk.Mul(decimal.NewFromInt(2)) // preserve RR 2:1
+	return goal
+}
+
 func summarize(userKey string, req goalRequest, duration, interval, validation string, r campaign.PaperResult) GoalRun {
 	estimate, _ := campaign.EstimateTrades(r.Goal)
 	stats := GoalRun{
@@ -351,9 +413,17 @@ func summarize(userKey string, req goalRequest, duration, interval, validation s
 		Validation:       validation,
 		EstimatedEntries: estimate,
 		SignalSetups:     r.Diagnostics.SetupsFound,
+		ExpectancyUSDT:   expectancyPerTrade(r),
+		RewardRisk:       rewardRiskRatio(r.Goal),
 		Actionable:       r.State.TradesClosed > 0,
 		CreatedAt:        time.Now().UTC(),
 	}
+	// Launchable means the paper sample shows a genuine, RR-adjusted edge — not a
+	// lucky $-target hit. A plan qualifies when it ran at least minLaunchTrades and
+	// the realized PnL (which already nets fees) over that sample is positive, i.e.
+	// positive realized expectancy per trade. This is why a high-RR plan can launch
+	// below 50% win rate, and a 2-trade fluke cannot.
+	stats.Launchable = stats.Trades >= minLaunchTrades && r.State.RealizedPnL.IsPositive()
 	if r.State.TradesClosed == 0 {
 		stats.Actionable = false
 		stats.NeedsPlanEdit = true
@@ -362,6 +432,33 @@ func summarize(userKey string, req goalRequest, duration, interval, validation s
 		stats.PlanHint = planEditHint(r)
 	}
 	return stats
+}
+
+// expectancyPerTrade is the realized average PnL per closed trade (fees included),
+// the RR-and-win-rate-adjusted edge the launch gate is built on. Empty when no
+// trade closed.
+func expectancyPerTrade(r campaign.PaperResult) string {
+	if r.State.TradesClosed <= 0 {
+		return ""
+	}
+	exp, err := r.State.RealizedPnL.QuoFloor(decimal.NewFromInt(int64(r.State.TradesClosed)), 4)
+	if err != nil {
+		return ""
+	}
+	return exp.String()
+}
+
+// rewardRiskRatio reports the goal's structural reward:risk (e.g. "2") for display,
+// so the user can see the system never trades a 1:1 bracket. Empty when undefined.
+func rewardRiskRatio(goal campaign.Goal) string {
+	if !goal.RiskPerTradeUSDT.IsPositive() {
+		return ""
+	}
+	rr, err := goal.RewardPerTradeUSDT.QuoFloor(goal.RiskPerTradeUSDT, 1)
+	if err != nil {
+		return ""
+	}
+	return rr.String()
 }
 
 func noSetupReason(r campaign.PaperResult) string {
