@@ -89,18 +89,19 @@ type PaperDiagnostics struct {
 
 // PaperResult bundles the run for the dashboard.
 type PaperResult struct {
-	Goal        Goal             `json:"goal"`
-	Symbol      string           `json:"symbol"`
-	Strategy    string           `json:"strategy"`
-	Bias        PaperBias        `json:"bias"`
-	Bars        int              `json:"bars"`
-	Trades      []PaperTrade     `json:"trades"`
-	State       State            `json:"state"`
-	Verdict     Verdict          `json:"verdict"`
-	Wins        int              `json:"wins"`
-	Losses      int              `json:"losses"`
-	WinRatePct  float64          `json:"win_rate_pct"`
-	Diagnostics PaperDiagnostics `json:"diagnostics,omitempty"`
+	Goal            Goal             `json:"goal"`
+	Symbol          string           `json:"symbol"`
+	Strategy        string           `json:"strategy"`
+	Bias            PaperBias        `json:"bias"`
+	Bars            int              `json:"bars"`
+	Trades          []PaperTrade     `json:"trades"`
+	State           State            `json:"state"`
+	Verdict         Verdict          `json:"verdict"`
+	Wins            int              `json:"wins"`
+	Losses          int              `json:"losses"`
+	WinRatePct      float64          `json:"win_rate_pct"`
+	MaxDrawdownUSDT decimal.Decimal  `json:"max_drawdown_usdt"`
+	Diagnostics     PaperDiagnostics `json:"diagnostics,omitempty"`
 }
 
 // StrategyFor maps a name to a backtest direction strategy used for paper runs.
@@ -448,8 +449,26 @@ func finalize(r PaperResult) PaperResult {
 	if r.Trades == nil {
 		r.Trades = []PaperTrade{}
 	}
+	r.MaxDrawdownUSDT = maxDrawdownUSDT(r.Trades)
 	r.Diagnostics.finalize()
 	return r
+}
+
+func maxDrawdownUSDT(trades []PaperTrade) decimal.Decimal {
+	peak := decimal.Zero()
+	worst := decimal.Zero()
+	for _, trade := range trades {
+		equity := trade.RunningPnL
+		if equity.Cmp(peak) > 0 {
+			peak = equity
+			continue
+		}
+		drawdown := peak.Sub(equity)
+		if drawdown.Cmp(worst) > 0 {
+			worst = drawdown
+		}
+	}
+	return worst
 }
 
 func (d *PaperDiagnostics) recordBlock(reason string) {

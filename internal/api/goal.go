@@ -42,35 +42,57 @@ type goalRequest struct {
 // subject (UserKey) so it works for any authenticated user — Telegram or
 // password — not just Telegram accounts.
 type GoalRun struct {
-	UserKey          string    `json:"-" bson:"user_key"`
-	Symbol           string    `json:"symbol" bson:"symbol"`
-	Strategy         string    `json:"strategy" bson:"strategy"`
-	Interval         string    `json:"interval" bson:"interval"`
-	Duration         string    `json:"duration" bson:"duration"`
-	Bias             string    `json:"bias" bson:"bias"`
-	UsedAI           bool      `json:"used_ai" bson:"used_ai"`
-	ProfitTarget     string    `json:"profit_target" bson:"profit_target"`
-	Capital          string    `json:"capital" bson:"capital"`
-	RiskPct          int       `json:"risk_pct" bson:"risk_pct"`
-	LeverageUsePct   int       `json:"leverage_use_pct" bson:"leverage_use_pct"`
-	Trades           int       `json:"trades" bson:"trades"`
-	Wins             int       `json:"wins" bson:"wins"`
-	Losses           int       `json:"losses" bson:"losses"`
-	WinRatePct       float64   `json:"win_rate_pct" bson:"win_rate_pct"`
-	RealizedPnL      string    `json:"realized_pnl" bson:"realized_pnl"`
-	Verdict          string    `json:"verdict" bson:"verdict"`
-	Validation       string    `json:"validation_window" bson:"validation_window"`
-	EstimatedEntries int       `json:"estimated_entries" bson:"estimated_entries"`
-	SignalSetups     int       `json:"signal_setups" bson:"signal_setups"`
-	ExpectancyUSDT   string    `json:"expectancy_per_trade" bson:"expectancy_per_trade"`
-	RewardRisk       string    `json:"reward_risk" bson:"reward_risk"`
-	Launchable       bool      `json:"launchable" bson:"launchable"`
-	Actionable       bool      `json:"actionable" bson:"actionable"`
-	NeedsPlanEdit    bool      `json:"needs_plan_edit" bson:"needs_plan_edit"`
-	BlockedReason    string    `json:"blocked_reason,omitempty" bson:"blocked_reason,omitempty"`
-	TopBlocker       string    `json:"top_blocker,omitempty" bson:"top_blocker,omitempty"`
-	PlanHint         string    `json:"plan_hint,omitempty" bson:"plan_hint,omitempty"`
-	CreatedAt        time.Time `json:"created_at" bson:"created_at"`
+	UserKey          string              `json:"-" bson:"user_key"`
+	Symbol           string              `json:"symbol" bson:"symbol"`
+	Strategy         string              `json:"strategy" bson:"strategy"`
+	Interval         string              `json:"interval" bson:"interval"`
+	Duration         string              `json:"duration" bson:"duration"`
+	Bias             string              `json:"bias" bson:"bias"`
+	UsedAI           bool                `json:"used_ai" bson:"used_ai"`
+	ProfitTarget     string              `json:"profit_target" bson:"profit_target"`
+	Capital          string              `json:"capital" bson:"capital"`
+	RiskPct          int                 `json:"risk_pct" bson:"risk_pct"`
+	LeverageUsePct   int                 `json:"leverage_use_pct" bson:"leverage_use_pct"`
+	Trades           int                 `json:"trades" bson:"trades"`
+	Wins             int                 `json:"wins" bson:"wins"`
+	Losses           int                 `json:"losses" bson:"losses"`
+	WinRatePct       float64             `json:"win_rate_pct" bson:"win_rate_pct"`
+	RealizedPnL      string              `json:"realized_pnl" bson:"realized_pnl"`
+	MaxDrawdownUSDT  string              `json:"max_drawdown_usdt" bson:"max_drawdown_usdt"`
+	Verdict          string              `json:"verdict" bson:"verdict"`
+	Validation       string              `json:"validation_window" bson:"validation_window"`
+	EstimatedEntries int                 `json:"estimated_entries" bson:"estimated_entries"`
+	SignalSetups     int                 `json:"signal_setups" bson:"signal_setups"`
+	ExpectancyUSDT   string              `json:"expectancy_per_trade" bson:"expectancy_per_trade"`
+	RewardRisk       string              `json:"reward_risk" bson:"reward_risk"`
+	Launchable       bool                `json:"launchable" bson:"launchable"`
+	Actionable       bool                `json:"actionable" bson:"actionable"`
+	NeedsPlanEdit    bool                `json:"needs_plan_edit" bson:"needs_plan_edit"`
+	BlockedReason    string              `json:"blocked_reason,omitempty" bson:"blocked_reason,omitempty"`
+	TopBlocker       string              `json:"top_blocker,omitempty" bson:"top_blocker,omitempty"`
+	PlanHint         string              `json:"plan_hint,omitempty" bson:"plan_hint,omitempty"`
+	WalkForward      *GoalRunWalkForward `json:"walk_forward,omitempty" bson:"walk_forward,omitempty"`
+	CreatedAt        time.Time           `json:"created_at" bson:"created_at"`
+}
+
+type GoalRunWalkForward struct {
+	FoldCount int                 `json:"fold_count" bson:"fold_count"`
+	Folds     []GoalRunFoldMetric `json:"folds" bson:"folds"`
+	Aggregate GoalRunFoldMetric   `json:"aggregate" bson:"aggregate"`
+}
+
+type GoalRunFoldMetric struct {
+	Index           int     `json:"index,omitempty" bson:"index,omitempty"`
+	WarmupBars      int     `json:"warmup_bars,omitempty" bson:"warmup_bars,omitempty"`
+	TestBars        int     `json:"test_bars" bson:"test_bars"`
+	Trades          int     `json:"trades" bson:"trades"`
+	Wins            int     `json:"wins" bson:"wins"`
+	Losses          int     `json:"losses" bson:"losses"`
+	WinRatePct      float64 `json:"win_rate_pct" bson:"win_rate_pct"`
+	RealizedPnL     string  `json:"realized_pnl" bson:"realized_pnl"`
+	ExpectancyUSDT  string  `json:"expectancy_per_trade" bson:"expectancy_per_trade"`
+	MaxDrawdownUSDT string  `json:"max_drawdown_usdt" bson:"max_drawdown_usdt"`
+	Verdict         string  `json:"verdict" bson:"verdict"`
 }
 
 // GoalRunStore persists and lists paper goal runs for a user, keyed by JWT
@@ -103,7 +125,15 @@ const (
 	goalHistoryMax              = 500
 	annyBasicPaperExecutionBars = 10080 // 7 days of 1m candles; ANNY Basic setups are intentionally sparse.
 	annyBasicPaperMainBars      = 1000
-	goalAIDirectionalConfidence = 50
+	annyBasicWalkForwardFolds   = 4
+	// QQE needs 73 closed 15m candles, and the fresh-cross scan can evaluate
+	// the latest bar plus the previous 3 bars. Walk-forward filters 15m candles
+	// per fold, so each fold must own enough 1m warmup to avoid cold-start OOS
+	// evidence.
+	annyBasicWalkForwardClosedMainBars       = 76
+	annyBasicWalkForwardExecutionBarsPerMain = 15
+	annyBasicWalkForwardWarmupBars           = annyBasicWalkForwardClosedMainBars * annyBasicWalkForwardExecutionBarsPerMain
+	goalAIDirectionalConfidence              = 50
 	// minLaunchSample is the absolute floor of trades for any launchable plan, so a
 	// single lucky fill can never pass the gate — even one that "reached" a trivial
 	// target.
@@ -201,16 +231,26 @@ func (s *Server) handleGoalRun(c fiber.Ctx) error {
 		bias, aiNote = s.aiBias(c.Context(), claimsOf(c).Subject, symbol, candles[len(candles)-1].Close)
 	}
 
-	result, err := campaign.RunPaper(campaign.PaperConfig{
+	paperCfg := campaign.PaperConfig{
 		Goal: goal, Symbol: symbol, Strategy: strategy, Bias: bias,
 		PlanBars: paperPlanBars, MainCandles: mainCandles,
-	}, candles)
+	}
+	result, err := campaign.RunPaper(paperCfg, candles)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	userKey := claimsOf(c).Subject
 	stats := summarize(userKey, req, duration, interval, validation, result)
+	if strategy == "anny_basic" {
+		wfCfg := paperCfg
+		wfCfg.WarmupBars = annyBasicWalkForwardWarmupBars
+		if wf, err := campaign.RunPaperWalkForward(wfCfg, candles, campaign.WalkForwardConfig{FoldCount: annyBasicWalkForwardFolds}); err != nil {
+			s.logger.Warn("walk-forward paper validation skipped", "symbol", symbol, "strategy", strategy, "error", err)
+		} else {
+			attachWalkForwardEvidence(&stats, wf)
+		}
+	}
 	// Persist a summary best-effort; a storage failure must not fail the run.
 	if userKey != "" && actionableGoalRun(stats) {
 		if err := s.goalRuns.Save(c.Context(), stats); err != nil {
@@ -413,6 +453,7 @@ func summarize(userKey string, req goalRequest, duration, interval, validation s
 		Losses:           r.Losses,
 		WinRatePct:       r.WinRatePct,
 		RealizedPnL:      r.State.RealizedPnL.String(),
+		MaxDrawdownUSDT:  r.MaxDrawdownUSDT.String(),
 		Verdict:          string(r.Verdict),
 		Validation:       validation,
 		EstimatedEntries: estimate,
@@ -443,6 +484,37 @@ func summarize(userKey string, req goalRequest, duration, interval, validation s
 		stats.PlanHint = planEditHint(r)
 	}
 	return stats
+}
+
+func attachWalkForwardEvidence(stats *GoalRun, wf campaign.WalkForwardResult) {
+	if stats == nil || len(wf.Folds) == 0 {
+		return
+	}
+	folds := make([]GoalRunFoldMetric, 0, len(wf.Folds))
+	for _, fold := range wf.Folds {
+		folds = append(folds, foldMetric(fold.Window.Index, fold.Window.WarmupBars, fold.Window.TestBars, fold.Result))
+	}
+	stats.WalkForward = &GoalRunWalkForward{
+		FoldCount: len(folds),
+		Folds:     folds,
+		Aggregate: foldMetric(0, 0, wf.Aggregate.Bars, wf.Aggregate),
+	}
+}
+
+func foldMetric(index, warmupBars, testBars int, r campaign.PaperResult) GoalRunFoldMetric {
+	return GoalRunFoldMetric{
+		Index:           index,
+		WarmupBars:      warmupBars,
+		TestBars:        testBars,
+		Trades:          r.State.TradesClosed,
+		Wins:            r.Wins,
+		Losses:          r.Losses,
+		WinRatePct:      r.WinRatePct,
+		RealizedPnL:     r.State.RealizedPnL.String(),
+		ExpectancyUSDT:  expectancyPerTrade(r),
+		MaxDrawdownUSDT: r.MaxDrawdownUSDT.String(),
+		Verdict:         string(r.Verdict),
+	}
 }
 
 // expectancyPerTrade is the realized average PnL per closed trade (fees included),

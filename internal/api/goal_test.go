@@ -414,3 +414,64 @@ func TestGoalLaunchableFlukeGuard(t *testing.T) {
 		})
 	}
 }
+
+func TestGoalRunEmbedsWalkForwardEvidence(t *testing.T) {
+	wf := campaign.WalkForwardResult{
+		Folds: []campaign.WalkForwardFoldResult{
+			{
+				Window: campaign.WalkForwardWindow{Index: 1, WarmupBars: 30, TestBars: 50},
+				Result: campaign.PaperResult{
+					State: campaign.State{TradesClosed: 2, RealizedPnL: decimal.MustParse("1.5")},
+					Wins:  1, Losses: 1, WinRatePct: 50,
+					MaxDrawdownUSDT: decimal.MustParse("1.2"),
+					Verdict:         campaign.Continue,
+				},
+			},
+			{
+				Window: campaign.WalkForwardWindow{Index: 2, WarmupBars: 30, TestBars: 50},
+				Result: campaign.PaperResult{
+					State: campaign.State{TradesClosed: 3, RealizedPnL: decimal.MustParse("2.5")},
+					Wins:  2, Losses: 1, WinRatePct: 66.6667,
+					MaxDrawdownUSDT: decimal.MustParse("2"),
+					Verdict:         campaign.StopTargetReached,
+				},
+			},
+		},
+		Aggregate: campaign.PaperResult{
+			State: campaign.State{TradesClosed: 5, RealizedPnL: decimal.MustParse("4")},
+			Wins:  3, Losses: 2, WinRatePct: 60,
+			MaxDrawdownUSDT: decimal.MustParse("2"),
+			Bars:            100,
+			Verdict:         campaign.Continue,
+		},
+	}
+	var stats GoalRun
+	attachWalkForwardEvidence(&stats, wf)
+
+	if stats.WalkForward == nil || stats.WalkForward.FoldCount != 2 {
+		t.Fatalf("walk-forward evidence = %+v, want two folds", stats.WalkForward)
+	}
+	if got := stats.WalkForward.Folds[0].RealizedPnL; got != "1.5" {
+		t.Fatalf("fold pnl = %s, want 1.5", got)
+	}
+	if got := stats.WalkForward.Aggregate.RealizedPnL; got != "4" {
+		t.Fatalf("aggregate pnl = %s, want 4", got)
+	}
+	if got := stats.WalkForward.Aggregate.MaxDrawdownUSDT; got != "2" {
+		t.Fatalf("aggregate drawdown = %s, want worst fold 2", got)
+	}
+}
+
+func TestAnnyBasicWalkForwardWarmupCoversModelIndicators(t *testing.T) {
+	wantWarmup := annyBasicWalkForwardClosedMainBars * annyBasicWalkForwardExecutionBarsPerMain
+	if annyBasicWalkForwardWarmupBars != wantWarmup {
+		t.Fatalf("walk-forward warmup = %d, want %d", annyBasicWalkForwardWarmupBars, wantWarmup)
+	}
+	if annyBasicWalkForwardClosedMainBars < 76 {
+		t.Fatalf("closed main warmup = %d, want at least 76 15m bars for QQE freshness", annyBasicWalkForwardClosedMainBars)
+	}
+	foldBars := annyBasicPaperExecutionBars / annyBasicWalkForwardFolds
+	if remaining := foldBars - annyBasicWalkForwardWarmupBars; remaining < 2 {
+		t.Fatalf("walk-forward fold leaves %d OOS bars, want at least 2", remaining)
+	}
+}
