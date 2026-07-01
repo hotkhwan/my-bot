@@ -7,18 +7,22 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"time"
 
 	"bottrade/internal/api"
 	"bottrade/internal/auth"
 	"bottrade/internal/config"
+	"bottrade/internal/decimal"
+	"bottrade/internal/domain"
 	"bottrade/internal/orders"
 	"bottrade/internal/users"
 )
@@ -34,10 +38,14 @@ func main() {
 
 	cfg, err := config.LoadFromLookup(lookup(map[string]string{
 		"TELEGRAM_BOT_TOKEN":        "123:abc",
+		"TELEGRAM_ADMIN_USER_ID":    "99999",
 		"TELEGRAM_ALLOWED_USER_IDS": "12345",
 		"MONGODB_URI":               "mongodb://localhost/none",
 		"MONGODB_DATABASE":          "tradebot",
 		"HTTP_ENABLED":              "true",
+		"DRY_RUN":                   "false",
+		"CAMPAIGN_LIVE_ENABLED":     "true",
+		"CREDENTIAL_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"MARKETDATA_BASE_URL":       stubURL,
 		"MAX_LEVERAGE":              "20",
 		"ACCESS_OPEN":               "true", // harness runs unlocked; gating is unit-tested
@@ -62,14 +70,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	// A dry-run order service (no exchange, no real orders) so the web console's
-	// parser-error path and Confirm flow can be driven in E2E safely.
-	orderSvc := orders.NewService(true, time.Minute, logger)
+	keyring, err := auth.NewKeyring(map[string][]byte{"v1": []byte("0123456789abcdef0123456789abcdef")}, "v1")
+	if err != nil {
+		logger.Error("keyring", "error", err)
+		os.Exit(1)
+	}
+	credSvc, err := auth.NewCredentialService(keyring, newE2ECredRepo())
+	if err != nil {
+		logger.Error("credentials", "error", err)
+		os.Exit(1)
+	}
+
+	// The harness opens the campaign/testnet gate, but the executor stays in-process:
+	// it never calls Binance and exists only so Playwright can verify arm/disarm UX.
+	orderSvc := orders.NewServiceWithRepositories(time.Minute, orders.DryRunExecutor{DryRun: true}, orders.ServiceDependencies{
+		ExecutorProvider: e2eExecutorProvider{credentials: credSvc},
+	}, logger)
 
 	server := api.NewServer(cfg, nil, logger,
 		api.WithUsers(userSvc),
 		api.WithTokenizer(tokenizer),
 		api.WithOrders(orderSvc),
+		api.WithCredentials(credSvc),
 	)
 
 	addr := envOr("E2E_ADDR", ":8099")
@@ -126,4 +148,131 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+type e2eCredRepo struct {
+	mu   sync.Mutex
+	rows map[string][]auth.BinanceCredential
+}
+
+func newE2ECredRepo() *e2eCredRepo {
+	return &e2eCredRepo{rows: make(map[string][]auth.BinanceCredential)}
+}
+
+func (r *e2eCredRepo) Save(_ context.Context, cred auth.BinanceCredential) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.rows[cred.UserID]
+	replaced := false
+	for i := range list {
+		if list[i].Profile == cred.Profile {
+			list[i] = cred
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		list = append(list, cred)
+	}
+	r.rows[cred.UserID] = list
+	return nil
+}
+
+func (r *e2eCredRepo) List(_ context.Context, userID string) ([]auth.BinanceCredential, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	src := r.rows[userID]
+	out := make([]auth.BinanceCredential, len(src))
+	copy(out, src)
+	return out, nil
+}
+
+func (r *e2eCredRepo) FindActive(_ context.Context, userID string) (auth.BinanceCredential, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, row := range r.rows[userID] {
+		if row.Active {
+			return row, nil
+		}
+	}
+	return auth.BinanceCredential{}, auth.ErrNoCredential
+}
+
+func (r *e2eCredRepo) Remove(_ context.Context, userID, profile string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.rows[userID]
+	out := list[:0]
+	for _, row := range list {
+		if row.Profile != profile {
+			out = append(out, row)
+		}
+	}
+	if len(out) == 0 {
+		delete(r.rows, userID)
+		return nil
+	}
+	r.rows[userID] = out
+	return nil
+}
+
+func (r *e2eCredRepo) SetActive(_ context.Context, userID, profile string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.rows[userID]
+	for i := range list {
+		list[i].Active = list[i].Profile == profile
+	}
+	r.rows[userID] = list
+	return nil
+}
+
+type e2eExecutorProvider struct {
+	credentials *auth.CredentialService
+}
+
+func (p e2eExecutorProvider) ExecutorFor(ctx context.Context, userKey string) (orders.Executor, bool, error) {
+	if p.credentials == nil {
+		return nil, false, nil
+	}
+	if _, err := p.credentials.Load(ctx, userKey); err != nil {
+		if errors.Is(err, auth.ErrNoCredential) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return e2eTestnetExecutor{}, true, nil
+}
+
+type e2eTestnetExecutor struct{}
+
+func (e2eTestnetExecutor) Execute(ctx context.Context, confirmation orders.Confirmation) (orders.ExecutionResult, error) {
+	select {
+	case <-ctx.Done():
+		return orders.ExecutionResult{}, ctx.Err()
+	default:
+	}
+	result := orders.ExecutionResult{
+		Mode:          "binance_testnet",
+		ClientOrderID: "e2e_" + confirmation.ID,
+		Message:       "E2E testnet accepted. No real order was sent.",
+		Quantity:      decimal.NewFromInt(1),
+	}
+	if confirmation.Intent.Open != nil {
+		result.Symbol = confirmation.Intent.Open.Symbol
+		result.Side = string(confirmation.Intent.Open.Side)
+	}
+	if confirmation.Intent.Close != nil {
+		result.Symbol = confirmation.Intent.Close.Symbol
+		result.RealizedPnL = decimal.Zero()
+	}
+	return result, nil
+}
+
+func (e2eTestnetExecutor) Positions(context.Context) ([]domain.Position, error) {
+	return nil, nil
+}
+
+func (e2eTestnetExecutor) RealizedTrade(context.Context, string, string, time.Time, decimal.Decimal) (orders.RealizedTrade, bool, error) {
+	return orders.RealizedTrade{}, false, nil
 }

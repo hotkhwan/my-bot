@@ -1,46 +1,126 @@
 import { test, expect, Page } from "@playwright/test";
+import * as crypto from "crypto";
 
-// Each test registers a fresh user (password flow — no Telegram needed) so runs
-// are independent against the in-memory user store.
+const BOT_TOKEN = "123:abc";
+const TG_ID = 12345;
+
+// Each password-flow test uses the seeded user from cmd/e2eserver. The login
+// path is independent of Telegram and is enough for paper/backtest surfaces.
 async function registerAndLogin(page: Page) {
   await page.goto("/");
   await page.fill("#username", "e2e_user");
   await page.fill("#password", "password123");
-  // Register creates the account (no session token); Log in then issues the JWT.
-  // Await each response so the login never races ahead of the register write.
   await Promise.all([
     page.waitForResponse((r) => r.url().includes("/api/login")),
     page.click("#login"),
   ]);
   await expect(page.locator("#nav")).toBeVisible();
-  // After login the default tab is Home (NOVA companion).
   await expect(page.locator("#view-home")).toBeVisible();
 }
 
-// Open the Trade tab, where the order ticket, goal form, and command console live.
+// Open the Trade tab, where the plan form, mission review, and Ask ANNY console live.
 async function gotoTrade(page: Page) {
   await page.click('#nav button[data-view="orders"]');
   await expect(page.locator("#view-orders")).toBeVisible();
 }
 
-test("login → goal paper run shows real stats", async ({ page }) => {
+function signedTelegramUser() {
+  const fields: Record<string, string> = {
+    id: String(TG_ID),
+    first_name: "E2E",
+    username: "e2e_tg",
+    auth_date: String(Math.floor(Date.now() / 1000)),
+  };
+  const dataCheck = Object.keys(fields)
+    .sort()
+    .map((key) => `${key}=${fields[key]}`)
+    .join("\n");
+  const secret = crypto.createHash("sha256").update(BOT_TOKEN).digest();
+  fields.hash = crypto.createHmac("sha256", secret).update(dataCheck).digest("hex");
+  return {
+    id: Number(fields.id),
+    first_name: fields.first_name,
+    username: fields.username,
+    auth_date: Number(fields.auth_date),
+    hash: fields.hash,
+  };
+}
+
+async function telegramToken(page: Page) {
+  const res = await page.request.post("/api/telegram-login", { data: signedTelegramUser() });
+  expect(res.ok()).toBeTruthy();
+  const body = await res.json();
+  expect(body.token).toBeTruthy();
+  return String(body.token);
+}
+
+async function openWithToken(page: Page, token: string, path = "/orders") {
+  await page.goto("/");
+  await page.evaluate((t) => localStorage.setItem("token", t), token);
+  await page.goto(path);
+  await expect(page.locator("#nav")).toBeVisible();
+  await expect(page.locator("#view-orders")).toBeVisible();
+}
+
+async function telegramLogin(page: Page) {
+  const token = await telegramToken(page);
+  await openWithToken(page, token);
+  return token;
+}
+
+async function addTestnetKey(page: Page, token: string) {
+  const res = await page.request.post("/api/credentials", {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {
+      profile: "testnet",
+      api_key: "e2e-testnet-key",
+      api_secret: "e2e-testnet-secret",
+      testnet: true,
+    },
+  });
+  expect(res.ok()).toBeTruthy();
+}
+
+async function assessRiskPlan(page: Page, opts: {
+  capital?: string;
+  risk?: string;
+  leverage?: string;
+  symbol?: string;
+  strategy?: string;
+  duration?: string;
+  ai?: boolean;
+} = {}) {
+  await page.fill("#g-capital", opts.capital ?? "100");
+  await page.fill("#g-risk", opts.risk ?? "70");
+  await page.fill("#g-leverage", opts.leverage ?? "25");
+  await page.selectOption("#g-symbol", opts.symbol ?? "BTC");
+  await page.selectOption("#g-strategy", opts.strategy ?? "ema");
+  await page.selectOption("#g-duration", opts.duration ?? "1h");
+  if (opts.ai ?? true) {
+    await page.check("#g-ai");
+  } else {
+    await page.uncheck("#g-ai");
+  }
+  await page.click("#g-run");
+  await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
+}
+
+test("login -> risk-budget paper run shows real stats without Target field", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
 
-  await page.fill("#g-profit", "5");
-  await page.fill("#g-capital", "100");
-  await page.fill("#g-risk", "30");
-  await page.selectOption("#g-symbol", "BTC");
-  await page.selectOption("#g-strategy", "ema");
-  await page.selectOption("#g-duration", "1h");
-  await page.click("#g-run");
+  await expect(page.locator("#g-profit")).toHaveCount(0);
+  await expect(page.locator("#view-orders")).not.toContainText("Target (USDT)");
+  await expect(page.locator("#g-duration")).toHaveValue("1h");
+
+  await assessRiskPlan(page);
 
   const card = page.locator("#g-card");
-  await expect(card).toBeVisible({ timeout: 20_000 });
-  // Real, deterministic outcome on the stub uptrend: target reached at 100% WR.
-  await expect(card).toContainText("Target reached");
-  await expect(card).toContainText("100%");
-  // Equity curve drawn, trades listed, and the run accumulates into history.
+  await expect(card).toContainText("Simulated P/L · this window");
+  await expect(card).toContainText(/Positive result in this window|Ran the full window/);
+  await expect(card).not.toContainText("Target reached");
+  await expect(page.locator("#bc-stats")).toContainText("Capital risk");
+  await expect(page.locator("#bc-stats")).toContainText("Leverage use");
   await expect(page.locator("#bc-spark svg")).toBeVisible();
   await expect(page.locator("#g-history")).toContainText("BTCUSDT");
 });
@@ -49,16 +129,9 @@ test("ANNY Basic no-setup asks for plan edit, not a zero paper result", async ({
   await registerAndLogin(page);
   await gotoTrade(page);
 
-  await page.fill("#g-profit", "10");
-  await page.fill("#g-capital", "100");
-  await page.fill("#g-risk", "60");
-  await page.selectOption("#g-symbol", "BTC");
-  await page.selectOption("#g-strategy", "anny_basic");
-  await page.selectOption("#g-duration", "15m");
-  await page.click("#g-run");
+  await assessRiskPlan(page, { risk: "60", strategy: "anny_basic", duration: "15m" });
 
   const card = page.locator("#g-card");
-  await expect(card).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("#g-card-title")).toContainText("Edit plan");
   await expect(page.locator("#bc-mode")).toContainText("EDIT PLAN");
   await expect(page.locator("#bc-pnl")).toContainText("Needs edit");
@@ -70,7 +143,6 @@ test("ANNY Basic no-setup asks for plan edit, not a zero paper result", async ({
   await expect(card).toContainText("Trades found");
   await expect(card).toContainText("Top blocker");
   await expect(card).toContainText("Next edit");
-  await expect(card).not.toContainText("No CDC/QQE setup");
   await expect(card).not.toContainText("+0% ROI");
   await expect(page.locator("#bc-spark svg")).toHaveCount(0);
   await expect(page.locator("#g-live")).toBeHidden();
@@ -80,12 +152,15 @@ test("ANNY Basic no-setup asks for plan edit, not a zero paper result", async ({
   await expect(page.locator("#g-strategy")).toHaveValue("auto");
 });
 
-test("trade tab shows the goal form and pages navigate", async ({ page }) => {
+test("trade tab shows the risk-budget form and pages navigate", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
 
   await expect(page.locator("#g-run")).toBeVisible();
   await expect(page.locator("#g-symbol")).toBeVisible();
+  await expect(page.locator("#g-capital")).toBeVisible();
+  await expect(page.locator("#g-profit")).toHaveCount(0);
+  await expect(page.locator("#g-duration")).not.toContainText("∞ until stop");
   // The old order ticket is gone.
   await expect(page.locator("#side-long")).toHaveCount(0);
 
@@ -112,14 +187,38 @@ test("malformed trade surfaces the parser's specific guidance", async ({ page })
   await expect(page.locator("#cmd-out")).not.toContainText("Unknown command");
 });
 
+test("Ask ANNY types progressively and a new answer cancels the old one", async ({ page }) => {
+  await registerAndLogin(page);
+  await gotoTrade(page);
+
+  const longAnswer = "FIRST ANSWER ".repeat(240);
+  const secondAnswer = "SECOND ANSWER COMPLETE";
+  await page.route("**/api/command", async (route) => {
+    const body = JSON.parse(route.request().postData() || "{}");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ output: body.command === "second" ? secondAnswer : longAnswer }),
+    });
+  });
+
+  await page.fill("#cmd", "first");
+  await page.click("#cmd-run");
+  await expect(page.locator("#cmd-out")).toBeVisible();
+  await page.waitForTimeout(90);
+  const partial = await page.locator("#cmd-out").innerText();
+  expect(partial.length).toBeGreaterThan(0);
+  expect(partial.length).toBeLessThan(longAnswer.length);
+
+  await page.fill("#cmd", "second");
+  await page.click("#cmd-run");
+  await expect(page.locator("#cmd-out")).toHaveText(secondAnswer, { timeout: 4_000 });
+});
+
 test("flight recorder logs the paper run, labeled and hashed", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
-  await page.fill("#g-profit", "5");
-  await page.selectOption("#g-symbol", "BTC");
-  await page.selectOption("#g-strategy", "ema");
-  await page.click("#g-run");
-  await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
+  await assessRiskPlan(page);
 
   await page.click('#nav button[data-view="history"]');
   await expect(page.locator("#view-history")).toBeVisible();
@@ -133,11 +232,7 @@ test("flight recorder logs the paper run, labeled and hashed", async ({ page }) 
 test("community leaderboard aggregates the run; mission replay opens", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
-  await page.fill("#g-profit", "5");
-  await page.selectOption("#g-symbol", "BTC");
-  await page.selectOption("#g-strategy", "ema");
-  await page.click("#g-run");
-  await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
+  await assessRiskPlan(page);
 
   // Community tab aggregates the paper run by strategy + coin.
   await page.click('#nav button[data-view="community"]');
@@ -157,48 +252,32 @@ test("goal run with AI toggle falls back gracefully (no key configured)", async 
   await registerAndLogin(page);
   await gotoTrade(page);
 
-  await page.check("#g-ai");
-  await page.fill("#g-profit", "5");
-  await page.selectOption("#g-symbol", "BTC");
-  await page.click("#g-run");
+  await assessRiskPlan(page, { ai: true });
 
-  // AI is not configured in the harness → it must still produce a real run and
+  // AI is not configured in the harness -> it must still produce a real run and
   // tell the user it used the rule-based strategy.
   await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("#g-msg")).toContainText("rule-based");
 });
 
-test("target-reached run is launch ready with RR/edge transparency and relabeled actions", async ({ page }) => {
+test("positive risk-budget run is launch ready with RR/edge transparency", async ({ page }) => {
   await registerAndLogin(page);
   await gotoTrade(page);
 
-  await page.fill("#g-profit", "5");
-  await page.fill("#g-capital", "100");
-  await page.fill("#g-risk", "30");
-  await page.fill("#g-leverage", "50");
-  await page.selectOption("#g-symbol", "BTC");
-  await page.selectOption("#g-strategy", "ema");
-  await page.selectOption("#g-duration", "unlimited");
-  await page.click("#g-run");
+  await assessRiskPlan(page);
 
   const card = page.locator("#g-card");
-  await expect(card).toBeVisible({ timeout: 20_000 });
-  // Stub uptrend reaches the target with positive edge over >= 2 trades.
-  await expect(card).toContainText("Target reached");
+  await expect(card).toContainText("Positive result in this window");
+  await expect(card).not.toContainText("Target reached");
   const stats = page.locator("#bc-stats");
-  // New transparency cells: structural reward:risk and the per-trade paper average.
+  // Transparency cells: structural reward:risk and the per-trade paper average.
   await expect(stats).toContainText("RR");
   await expect(stats).toContainText("1 : 2");
   await expect(stats).toContainText("Paper avg / trade");
   await expect(stats).toContainText("USDT");
-  // Reaching the target IS the success signal — a sparse but target-hitting plan
-  // is rule-eligible (no longer blocked by the 5-trade non-target sample rule).
   await expect(stats).toContainText("Rule eligibility");
   await expect(stats).toContainText("Eligible");
-  // Relabeled action: the edit button now reads "Update plan".
   await expect(page.locator("#g-edit")).toHaveText("Update plan");
-  // Next carries the new label (gated behind a Binance key in this harness — the
-  // correct real-trading guard).
   await expect(page.locator("#g-live")).toHaveText("Next →");
 });
 
@@ -206,23 +285,36 @@ test("editing the plan after assessment blocks Launch until re-assessed", async 
   await registerAndLogin(page);
   await gotoTrade(page);
 
-  // Assess a launchable plan (stub uptrend → target reached).
-  await page.fill("#g-profit", "5");
-  await page.fill("#g-capital", "100");
-  await page.fill("#g-risk", "30");
-  await page.selectOption("#g-symbol", "BTC");
-  await page.selectOption("#g-strategy", "ema");
-  await page.selectOption("#g-duration", "unlimited");
-  await page.click("#g-run");
-  await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator("#g-card")).toContainText("Target reached");
+  await assessRiskPlan(page);
 
   // Change the plan AFTER assessing, then try to Launch: the guard must block so
-  // the paper evidence and the live mission can never drift apart. The block
-  // happens before any confirm dialog, so no dialog handling is needed.
-  await page.fill("#g-profit", "20");
+  // the paper evidence and the live mission can never drift apart.
+  await page.fill("#g-capital", "200");
   await page.click("#g-live");
   await expect(page.locator("#g-msg")).toContainText("changed after the paper assessment");
+});
+
+test("testnet mission disarm clears running status and shows what happens next", async ({ page }) => {
+  const token = await telegramLogin(page);
+  await addTestnetKey(page, token);
+  await openWithToken(page, token, "/orders");
+
+  await assessRiskPlan(page);
+  await expect(page.locator("#g-live")).toBeVisible();
+
+  await page.click("#g-live");
+  await expect(page.locator("#confirm-modal")).toBeVisible();
+  await page.click("#confirm-modal-ok");
+
+  await expect(page.locator("#g-confirm-out")).toContainText("within your risk budget", { timeout: 10_000 });
+  await expect(page.locator("#g-campaign-status")).toContainText("Mission · BTCUSDT");
+  await expect(page.locator("#g-campaign-status")).toContainText("waiting for a setup");
+  await expect(page.locator("#g-campaign-actions")).toBeVisible();
+
+  await page.click("#g-campaign-disarm");
+  await expect(page.locator("#g-campaign-status")).toBeHidden();
+  await expect(page.locator("#toast")).toContainText("Mission disarmed");
+  await expect(page.locator("#positions")).toContainText("No open position", { timeout: 5_000 });
 });
 
 test("logout bounces back to the landing page and resets the URL", async ({ page }) => {

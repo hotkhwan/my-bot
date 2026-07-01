@@ -27,8 +27,11 @@ test("capture all screens", async ({ page }) => {
   await page.click('#nav button[data-view="orders"]');
   await expect(page.locator("#view-orders")).toBeVisible();
   // Run a goal so the Trade screenshot shows real stats.
-  await page.fill("#g-profit", "5");
+  await page.fill("#g-capital", "100");
+  await page.fill("#g-risk", "70");
+  await page.fill("#g-leverage", "25");
   await page.selectOption("#g-symbol", "BTC");
+  await page.selectOption("#g-duration", "1h");
   await page.click("#g-run");
   await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(300);
