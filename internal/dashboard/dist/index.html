@@ -151,6 +151,10 @@
       .modal-msg { font-size: 0.85rem; line-height: 1.5; color: var(--muted); margin: 0 0 1rem; max-height: 46vh; overflow-y: auto; }
       .modal-actions { display: flex; gap: 0.6rem; }
       .modal-actions button { flex: 1; }
+      /* inline button spinner — reassures the user a request is in flight */
+      .spinner { display: inline-block; width: 0.85em; height: 0.85em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.65s linear infinite; vertical-align: -1px; margin-right: 0.35rem; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .working { color: var(--primary); }
       /* type-or-pick combobox (replaces flaky datalist) */
       .combo { position: relative; }
       .combo input { width: 100%; padding-right: 2.2rem; }
@@ -769,6 +773,20 @@
           $("confirm-modal").onclick = (e) => { if (e.target === $("confirm-modal")) finish(false); };
         });
       }
+      // setLoading toggles a button into a spinner+label "working" state and back,
+      // so an in-flight request (especially a slow AI assessment) never looks idle.
+      function setLoading(btnId, on, label) {
+        const b = $(btnId);
+        if (!b) return;
+        if (on) {
+          if (b.dataset.idle === undefined) b.dataset.idle = b.innerHTML;
+          b.disabled = true;
+          b.innerHTML = '<span class="spinner"></span>' + (label || "Working…");
+        } else {
+          b.disabled = false;
+          if (b.dataset.idle !== undefined) { b.innerHTML = b.dataset.idle; delete b.dataset.idle; }
+        }
+      }
       // Any ⓘ badge shows its data-info on tap; tapping elsewhere closes menus.
       document.addEventListener("click", (e) => {
         const b = e.target.closest(".ibadge");
@@ -1226,7 +1244,9 @@
       }
       async function runCommand(command) {
         if (!command.trim()) return;
-        cmdConfirm.classList.add("hidden"); cmdSpark.innerHTML = ""; pendingConfirmId = null; cmdOut.textContent = "…"; cmdOut.classList.remove("hidden");
+        cmdConfirm.classList.add("hidden"); cmdSpark.innerHTML = ""; pendingConfirmId = null;
+        cmdOut.textContent = "⏳ ANNY is working on it…"; cmdOut.classList.remove("hidden");
+        setLoading("cmd-run", true, "…");
         try {
           const r = await fetch("/api/command", { method: "POST", headers: authHeaders(), body: JSON.stringify({ command }) });
           const d = await r.json().catch(() => ({}));
@@ -1234,6 +1254,7 @@
           if (d.curve && d.curve.length) cmdSpark.innerHTML = sparkline(d.curve.map(Number));
           if (d.confirm_id) { pendingConfirmId = d.confirm_id; cmdConfirm.classList.remove("hidden"); }
         } catch (e) { cmdOut.textContent = "Network error"; }
+        finally { setLoading("cmd-run", false); }
       }
       async function resolveConfirm(cancel) {
         if (!pendingConfirmId) return;
@@ -1474,14 +1495,9 @@
           addMissionActivity(`Armed ${armed.symbol || ""}${when}`);
         }
       }
-      async function loadArmedMissions() {
-        try {
-          const d = await (await fetch("/api/mission/armed", { headers: authHeaders() })).json();
-          const active = (d.armed || []).find((m) => m.status === "armed");
-          if (!active || armedMissionId) return;
-          setArmedState(active, `Armed — ANNY may auto-place one testnet entry on ${active.symbol} before this window expires. No setup is guaranteed.`);
-        } catch (e) {}
-      }
+      // Single-shot "armed" missions are retired: a Mission is always a multi-trade
+      // campaign now, so we never surface or arm the one-entry path in the UI.
+      async function loadArmedMissions() { resetArmedUI(); }
       function fmtPnl(v) { const n = Number(v) || 0; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100); }
       function goalNeedsEdit(st) {
         return !!(st && (st.needs_plan_edit || Number(st.trades || 0) === 0));
@@ -1629,8 +1645,8 @@
         if (d.ai && !needsEdit) goalMsg(d.ai, true);
       }
       async function runGoal() {
-        goalMsg("Running on real candles…", true);
-        $("g-run").disabled = true;
+        goalMsg("⏳ Assessing on real Binance candles — please wait, this can take a few seconds. We'll scroll to the result for you.", true);
+        setLoading("g-run", true, "Assessing…");
         $("g-review-actions").classList.add("hidden");
         $("g-live").classList.add("hidden");
         $("g-try-auto").classList.add("hidden");
@@ -1648,7 +1664,7 @@
           renderGoalResult(d, body); loadGoalHistory();
           $("g-card").scrollIntoView({ behavior:"smooth", block:"center" });
         } catch (e) { goalMsg("Network error"); }
-        finally { $("g-run").disabled = false; }
+        finally { setLoading("g-run", false); }
       }
       $("g-run").onclick = runGoal;
       $("g-edit").onclick = () => { $("g-profit").focus(); $("view-orders").scrollIntoView({ behavior:"smooth", block:"start" }); };
@@ -1672,8 +1688,8 @@
         // pre-authorizes a bounded, capped series of auto testnet entries toward the
         // target. ANNY opens and closes trades itself until a stop condition fires.
         if (!(await showConfirm("One confirmation pre-authorizes a bounded, capped SERIES of automatic testnet entries. ANNY opens and closes trades until whichever comes first: your profit target, two consecutive losses, the 15-trade cap, or the plan window ends. Entries may lose. Testnet only. Disarm any time. Trading involves substantial risk. Not financial advice.", { title: "Start Mission?", okLabel: "Start mission" }))) return;
-        goalMsg("Starting mission…", true);
-        $("g-live").disabled = true;
+        goalMsg("⏳ Starting mission — staging on your testnet key, please wait…", true);
+        setLoading("g-live", true, "Starting…");
         try {
           const r = await fetch("/api/mission/campaign/arm", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
           const d = await r.json().catch(() => ({}));
@@ -1685,7 +1701,7 @@
           addMissionActivity(d.output || "Mission started.");
           $("live-card").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (e) { goalMsg("Network error"); }
-        finally { $("g-live").disabled = false; }
+        finally { setLoading("g-live", false); }
       }
       $("g-live").onclick = runLiveMission;
       // Live-mission confirm flow, inline under the buttons.
@@ -1772,12 +1788,15 @@
       async function disarmCampaign() {
         if (!campaignMission) return;
         const id = campaignMission.id;
-        $("g-campaign-disarm").disabled = true;
+        setLoading("g-campaign-disarm", true, "Disarming…");
         try {
           const d = await (await fetch("/api/mission/campaign/disarm", { method: "POST", headers: authHeaders(), body: JSON.stringify({ id }) })).json();
           addMissionActivity(d.output || "Mission disarmed.");
           if (d.campaign) setCampaignState(d.campaign); else setCampaignState(null);
-        } catch (e) {} finally { $("g-campaign-disarm").disabled = false; }
+          showToast("Mission disarmed — no new entries. An open trade (if any) finishes on its own exit. Assess a new plan above to start again.");
+          setTimeout(loadPositions, 1200);
+        } catch (e) { showToast("Network error while disarming."); }
+        finally { setLoading("g-campaign-disarm", false); }
       }
       $("g-campaign-disarm").onclick = disarmCampaign;
       // ---- live positions (the user's own testnet account) ----

@@ -236,8 +236,15 @@ func (s *Server) runtimeContext() context.Context {
 
 func (s *Server) Run(ctx context.Context) error {
 	s.runtimeCtx = ctx
-	if n := s.startArmedMissionWatchers(ctx); n > 0 {
-		s.logger.Info("armed missions rehydrated", "count", n)
+	// Single-shot "armed" missions are retired in favour of multi-trade campaigns.
+	// We no longer rehydrate or fire them, so a leftover armed row can never place a
+	// lone entry; we only sweep any stale rows so they don't linger as "armed".
+	if s.armedMissions != nil {
+		if swept, err := s.armedMissions.ExpireStale(ctx, time.Now().UTC()); err != nil {
+			s.logger.Warn("armed mission expire-stale failed", "error", err)
+		} else if swept > 0 {
+			s.logger.Info("armed missions expired on boot (single-shot retired)", "count", swept)
+		}
 	}
 	if n := s.startCampaignMissionRunners(ctx); n > 0 {
 		s.logger.Info("campaign missions rehydrated", "count", n)
