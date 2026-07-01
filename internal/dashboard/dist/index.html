@@ -457,7 +457,7 @@
           <div id="g-reco" class="reco hidden"></div>
           <div class="ticket">
             <div class="grid2">
-              <div><label for="g-profit">Profit target (USDT)</label><input id="g-profit" inputmode="decimal" placeholder="10" value="10" autocomplete="off" /></div>
+              <div><label for="g-profit">Target (USDT)</label><input id="g-profit" inputmode="decimal" placeholder="10" value="10" autocomplete="off" /></div>
               <div><label for="g-capital">Capital (USDT)</label><input id="g-capital" inputmode="decimal" placeholder="100" value="100" autocomplete="off" /></div>
             </div>
             <div class="grid2">
@@ -481,11 +481,11 @@
                 <div class="bcard-sym" id="bc-sym">—</div>
                 <div class="bcard-tags" id="bc-tags"></div>
               </div>
-              <span class="bcard-net" id="bc-mode" title="Paper run — simulated on real Binance candles. No real orders, no real money. Just proof of how the strategy would have done.">PAPER ⓘ</span>
+              <span class="bcard-net" id="bc-mode" title="Paper simulation on historical Binance candles. No real orders, no real money, not a prediction or guarantee.">PAPER ⓘ</span>
             </div>
             <div class="bcard-mid">
               <div>
-                <div class="bcard-lbl" id="bc-pnl-label">Estimated net PnL (USDT)</div>
+                <div class="bcard-lbl" id="bc-pnl-label">Paper simulation PnL (USDT)</div>
                 <div class="bcard-num mono" id="bc-pnl">+0.00</div>
                 <div class="bcard-roi mono" id="bc-roi"></div>
               </div>
@@ -506,8 +506,9 @@
 
         <div class="card" id="live-card">
           <div class="flow-step"><span class="flow-no">3</span><strong>Launch &amp; confirm</strong></div>
-          <p style="margin:0.3rem 0">Review the proposed testnet order. Nothing is placed until you confirm.</p>
+          <p id="g-step3-sub" style="margin:0.3rem 0">Review the proposed testnet order. Nothing is placed until you confirm.</p>
           <pre id="g-confirm-out" class="output hidden"></pre>
+          <div id="g-armed-status" class="hidden" style="margin:0.4rem 0;font:600 0.85rem var(--font-mono)"></div>
           <div id="g-confirm-actions" class="actions hidden">
             <button class="primary" id="g-confirm-yes">Confirm mission</button>
             <button class="ghost" id="g-confirm-no">Cancel</button>
@@ -1315,6 +1316,7 @@
       let armedMissionId = null;
       let activeMission = JSON.parse(localStorage.getItem("activeMission") || "null");
       let lastGoalStats = null;
+      let lastGoalRequest = null;
       function durationMs(v) {
         const m = /^(\d+)(m|h|w)$/.exec(v || "");
         if (!m) return 0;
@@ -1327,8 +1329,92 @@
         box.textContent = `[${stamp}] ${text}\n\n` + box.textContent;
         box.classList.remove("hidden");
       }
+      let armedMission = null;     // full record being tracked (for live countdown)
+      let armedPollTimer = null;   // server status poll
+      let armedTickTimer = null;   // 1s local countdown tick
+      // step3Header swaps the Step-3 subtitle between the manual-confirm flow and the
+      // armed wait-for-setup flow so the copy matches what's actually happening.
+      function step3Header(mode) {
+        const el = $("g-step3-sub");
+        if (!el) return;
+        el.textContent = mode === "armed"
+          ? "Armed — ANNY is waiting for a live ANNY Basic setup and will auto-place one capped testnet entry if one appears. Disarm any time."
+          : "Review the proposed testnet order. Nothing is placed until you confirm.";
+      }
+      function fmtCountdown(ms) {
+        if (!isFinite(ms) || ms <= 0) return "expired";
+        const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+        return (h > 0 ? h + "h " : "") + m + "m " + (ss < 10 ? "0" : "") + ss + "s";
+      }
+      // renderArmedCountdown updates only the live status line; the legal disclosure
+      // (from the server) stays put in g-confirm-out, untouched.
+      function renderArmedCountdown() {
+        if (!armedMissionId || !armedMission) return;
+        const exp = new Date(armedMission.expires_at).getTime();
+        const box = $("g-armed-status");
+        box.classList.remove("hidden");
+        box.style.color = "var(--primary)";
+        box.textContent = `🎯 Armed · ${armedMission.symbol || ""} · waiting for setup · expires in ${fmtCountdown(exp - Date.now())}`;
+      }
+      function stopArmedPolling() {
+        if (armedTickTimer) { clearInterval(armedTickTimer); armedTickTimer = null; }
+        if (armedPollTimer) { clearInterval(armedPollTimer); armedPollTimer = null; }
+      }
+      // resetArmedUI clears any armed tracking + countdown and restores the manual
+      // Step-3 header (used when a new run starts or a manual confirmation is staged).
+      function resetArmedUI() {
+        stopArmedPolling();
+        armedMissionId = null; armedMission = null;
+        $("g-armed-actions").classList.add("hidden");
+        $("g-armed-status").classList.add("hidden");
+        step3Header("manual");
+      }
+      function startArmedPolling() {
+        stopArmedPolling();
+        armedTickTimer = setInterval(renderArmedCountdown, 1000);
+        armedPollTimer = setInterval(pollArmed, 7000);
+      }
+      // applyArmedStatus reacts to the latest server record: keep counting down while
+      // armed; surface the outcome immediately on a terminal state.
+      function applyArmedStatus(m) {
+        if (!m) return;
+        // Still "armed" in the DB but the window already passed (watcher not yet
+        // swept it) — show it as expired rather than a stuck "armed · expired".
+        const past = m.expires_at && new Date(m.expires_at).getTime() <= Date.now();
+        if (m.status === "armed" && !past) { armedMission = m; renderArmedCountdown(); return; }
+        if (m.status === "armed" && past) m = Object.assign({}, m, { status: "expired" });
+        stopArmedPolling();
+        armedMissionId = null; armedMission = null;
+        $("g-armed-actions").classList.add("hidden");
+        step3Header("manual");
+        const box = $("g-armed-status");
+        box.classList.remove("hidden");
+        if (m.status === "triggered") {
+          box.style.color = "var(--profit)";
+          box.textContent = `🚀 Setup found — testnet entry placed on ${m.symbol || ""} ${m.side || ""}. See Live monitor below.`;
+          addMissionActivity(`Triggered ${m.symbol || ""} ${m.side || ""} — testnet entry placed`);
+          if (typeof loadPositions === "function") loadPositions();
+        } else if (m.status === "expired") {
+          box.style.color = "var(--muted)";
+          box.textContent = `⌛ Window expired on ${m.symbol || ""} — no setup appeared, no order placed.`;
+          addMissionActivity(`Expired ${m.symbol || ""} — no order`);
+        } else { // disarmed
+          box.style.color = "var(--muted)";
+          box.textContent = "Disarmed. No order will be placed.";
+        }
+      }
+      async function pollArmed() {
+        if (!armedMissionId) { stopArmedPolling(); return; }
+        try {
+          const d = await (await fetch("/api/mission/armed", { headers: authHeaders() })).json();
+          const m = (d.armed || []).find((x) => x.id === armedMissionId);
+          if (!m) { stopArmedPolling(); return; }
+          applyArmedStatus(m);
+        } catch (e) {}
+      }
       function setArmedState(armed, output) {
         armedMissionId = armed && armed.id ? armed.id : null;
+        armedMission = armed || null;
         if (output) {
           $("g-confirm-out").textContent = output;
           $("g-confirm-out").classList.remove("hidden");
@@ -1336,6 +1422,9 @@
         $("g-armed-actions").classList.toggle("hidden", !armedMissionId);
         $("g-confirm-actions").classList.add("hidden");
         if (armedMissionId && armed) {
+          step3Header("armed");
+          renderArmedCountdown();
+          startArmedPolling();
           const exp = armed.expires_at ? new Date(armed.expires_at) : null;
           const when = exp && !isNaN(exp.getTime()) ? " · expires " + exp.toLocaleTimeString() : "";
           addMissionActivity(`Armed ${armed.symbol || ""}${when}`);
@@ -1346,7 +1435,7 @@
           const d = await (await fetch("/api/mission/armed", { headers: authHeaders() })).json();
           const active = (d.armed || []).find((m) => m.status === "armed");
           if (!active || armedMissionId) return;
-          setArmedState(active, `Armed — waiting for an ANNY Basic setup on ${active.symbol}.`);
+          setArmedState(active, `Armed — ANNY may auto-place one testnet entry on ${active.symbol} before this window expires. No setup is guaranteed.`);
         } catch (e) {}
       }
       function fmtPnl(v) { const n = Number(v) || 0; return (n >= 0 ? "+" : "") + (Math.round(n * 100) / 100); }
@@ -1359,6 +1448,23 @@
         // realized expectancy. A high-RR plan can launch below 50% win rate; a
         // 2-trade fluke cannot.
         return !!(st && !goalNeedsEdit(st) && st.launchable === true);
+      }
+      function goalFormRequest() {
+        return {
+          profit: $("g-profit").value,
+          capital: $("g-capital").value,
+          capital_risk_pct: parseInt($("g-risk").value, 10) || 5,
+          leverage_use_pct: parseInt($("g-leverage").value, 10) || 25,
+          symbol: $("g-symbol").value,
+          strategy: $("g-strategy").value,
+          duration: $("g-duration").value,
+          use_ai: $("g-ai").checked,
+        };
+      }
+      function sameGoalRequest(a, b) {
+        if (!a || !b) return false;
+        return ["profit", "capital", "capital_risk_pct", "leverage_use_pct", "symbol", "strategy", "duration", "use_ai"]
+          .every((k) => String(a[k]) === String(b[k]));
       }
       function launchBlockReason(st) {
         const trades = Number((st && st.trades) || 0);
@@ -1395,6 +1501,7 @@
       function renderGoalResult(d, request) {
         const st = d.stats || {};
         lastGoalStats = st;
+        lastGoalRequest = request ? Object.assign({}, request) : null;
         const needsEdit = goalNeedsEdit(st);
         const pnl = Number(st.realized_pnl || 0), up = pnl >= 0;
         const cap = Number(st.capital || 100) || 100;
@@ -1409,17 +1516,17 @@
         $("bc-mode").textContent = needsEdit ? "EDIT PLAN" : "PAPER ⓘ";
         $("bc-mode").title = needsEdit
           ? "No actionable setup was found in this validation window. Change the plan before launching."
-          : "Paper run — simulated on real Binance candles. No real orders, no real money. Just proof of how the strategy would have done.";
-        $("bc-pnl-label").textContent = needsEdit ? "Assessment status" : "Estimated net PnL (USDT)";
+          : "Paper simulation on historical Binance candles. No real orders, no real money, not a prediction or guarantee.";
+        $("bc-pnl-label").textContent = needsEdit ? "Assessment status" : "Paper simulation PnL (USDT)";
         if (needsEdit) {
           $("bc-pnl").textContent = "Needs edit";
           $("bc-pnl").className = "bcard-num mono status";
-          $("bc-roi").textContent = "No paper result to launch";
+          $("bc-roi").textContent = "No paper evidence for testnet review";
           $("bc-roi").className = "bcard-roi mono";
           $("bc-spark").innerHTML = "";
         } else {
           $("bc-pnl").textContent = (up ? "+" : "") + (Math.round(pnl * 100) / 100); $("bc-pnl").className = "bcard-num mono " + (up ? "up" : "down");
-          $("bc-roi").textContent = (up ? "+" : "") + (Math.round(roi * 100) / 100) + "% ROI"; $("bc-roi").className = "bcard-roi mono " + (up ? "up" : "down");
+          $("bc-roi").textContent = (up ? "+" : "") + (Math.round(roi * 100) / 100) + "% paper window only"; $("bc-roi").className = "bcard-roi mono " + (up ? "up" : "down");
           $("bc-spark").innerHTML = (d.curve && d.curve.length) ? bcardSpark(d.curve.map(Number)) : "";
         }
         const cells = needsEdit ? [
@@ -1434,12 +1541,12 @@
           ["Capital risk", (st.risk_pct || 0) + "%", ""],
           ["Leverage use", (st.leverage_use_pct || 0) + "%", ""],
         ] : [
-          ["Win rate", (Math.round((st.win_rate_pct || 0) * 10) / 10) + "%", ""],
+          ["Paper win rate", (Math.round((st.win_rate_pct || 0) * 10) / 10) + "%", ""],
           ["RR", st.reward_risk ? ("1 : " + st.reward_risk) : "—", "up"],
-          ["Edge / trade", expFmt(st.expectancy_per_trade), expCls(st.expectancy_per_trade)],
+          ["Paper avg / trade", expFmt(st.expectancy_per_trade), expCls(st.expectancy_per_trade)],
           ["Trades", String(st.trades || 0), ""],
           ["W / L", (st.wins || 0) + " / " + (st.losses || 0), ""],
-          ["Launch ready", canLaunchGoal(st) ? "Yes" : "No", canLaunchGoal(st) ? "up" : "down"],
+          ["Rule eligibility", canLaunchGoal(st) ? "Eligible" : "Review", canLaunchGoal(st) ? "up" : "down"],
           ["Entries needed", String(st.estimated_entries || "—"), ""],
           ["Validation", st.validation_window || st.duration || "—", ""],
           ["Capital", cap + " USDT", ""],
@@ -1467,8 +1574,8 @@
           goalMsg(planEditReason(st) + ". Edit the plan before Launch & confirm." + hintNote + aiNote, false);
           $("g-confirm-out").classList.add("hidden");
           $("g-confirm-actions").classList.add("hidden");
-          $("g-armed-actions").classList.add("hidden");
-          pendingMission = null; missionConfirmId = null; armedMissionId = null;
+          resetArmedUI();
+          pendingMission = null; missionConfirmId = null;
         }
         const trades = d.trades || [];
         $("g-trades").innerHTML = trades.length
@@ -1486,13 +1593,9 @@
         $("g-try-rsi").classList.add("hidden");
         $("g-confirm-out").classList.add("hidden");
         $("g-confirm-actions").classList.add("hidden");
-        $("g-armed-actions").classList.add("hidden");
-        pendingMission = null; missionConfirmId = null; armedMissionId = null; lastGoalStats = null;
-        const body = {
-          profit: $("g-profit").value, capital: $("g-capital").value,
-          capital_risk_pct: parseInt($("g-risk").value, 10) || 5, leverage_use_pct: parseInt($("g-leverage").value, 10) || 25, symbol: $("g-symbol").value,
-          strategy: $("g-strategy").value, duration: $("g-duration").value, use_ai: $("g-ai").checked,
-        };
+        resetArmedUI();
+        pendingMission = null; missionConfirmId = null; lastGoalStats = null; lastGoalRequest = null;
+        const body = goalFormRequest();
         try {
           const r = await fetch("/api/goal/run", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
           const d = await r.json().catch(() => ({}));
@@ -1514,10 +1617,16 @@
           $("g-edit").focus();
           return;
         }
-        if (!confirm("Run a LIVE testnet Mission? If no setup is live, ANNY can arm the plan to wait inside this window. Testnet only.")) return;
+        const current = goalFormRequest();
+        if (!sameGoalRequest(current, lastGoalRequest)) {
+          goalMsg("This plan changed after the paper assessment. Assess this exact plan again before Launch & confirm.", false);
+          $("g-run").focus();
+          return;
+        }
+        if (!confirm("Run a LIVE testnet Mission? If no setup is live, ANNY can arm the plan and auto-place one capped testnet entry inside this window. No setup is guaranteed.")) return;
         goalMsg("Preparing live Mission…", true);
         $("g-live").disabled = true;
-        const body = { symbol: $("g-symbol").value, capital: $("g-capital").value, capital_risk_pct: parseInt($("g-risk").value, 10) || 5, leverage_use_pct: parseInt($("g-leverage").value, 10) || 25, strategy: $("g-strategy").value, duration: $("g-duration").value, use_ai: $("g-ai").checked };
+        const body = Object.assign({}, lastGoalRequest);
         try {
           const r = await fetch("/api/mission/prepare", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
           const d = await r.json().catch(() => ({}));
@@ -1527,9 +1636,9 @@
           // Show the order + Confirm right here under the button, not in the chat box.
           $("g-confirm-out").textContent = d.output || ""; $("g-confirm-out").classList.remove("hidden");
           pendingMission = d.mission || null;
-          if (d.armed) { setArmedState(d.armed, d.output || "Armed — waiting for setup."); }
-          else if (d.confirm_id) { missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); $("g-armed-actions").classList.add("hidden"); }
-          else { $("g-confirm-actions").classList.add("hidden"); $("g-armed-actions").classList.add("hidden"); }
+          if (d.armed) { setArmedState(d.armed, d.output || "Armed — waiting for setup; one capped testnet entry may be auto-placed before expiry."); }
+          else if (d.confirm_id) { resetArmedUI(); missionConfirmId = d.confirm_id; $("g-confirm-actions").classList.remove("hidden"); }
+          else { resetArmedUI(); $("g-confirm-actions").classList.add("hidden"); }
           $("live-card").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (e) { goalMsg("Network error"); }
         finally { $("g-live").disabled = false; }
@@ -1564,10 +1673,12 @@
         $("g-disarm").disabled = true;
         try {
           const d = await (await fetch("/api/mission/disarm", { method: "POST", headers: authHeaders(), body: JSON.stringify({ id }) })).json();
-          $("g-confirm-out").textContent = d.output || d.error || "Disarmed.";
           addMissionActivity(d.output || "Disarmed.");
-          armedMissionId = null;
-          $("g-armed-actions").classList.add("hidden");
+          resetArmedUI();
+          const box = $("g-armed-status");
+          box.classList.remove("hidden");
+          box.style.color = "var(--muted)";
+          box.textContent = d.output || d.error || "Disarmed. No order will be placed.";
         } catch (e) { $("g-confirm-out").textContent = "Network error"; }
         finally { $("g-disarm").disabled = false; }
       }
@@ -1690,7 +1801,7 @@
           const since = st.since ? new Date(st.since).toLocaleDateString() : "—";
           $("rec-stats").innerHTML = [
             ["Live since", since], ["Real trades", st.real_trades || 0],
-            ["Win rate", Math.round(st.real_win_rate || 0) + "%"], ["Real PnL", fmtPnl(st.real_pnl) + " USDT"],
+            ["Realized win rate", Math.round(st.real_win_rate || 0) + "%"], ["Realized PnL", fmtPnl(st.real_pnl) + " USDT"],
             ["Paper runs", st.paper_runs || 0], ["Transparency", (st.transparency ?? 100) + "%"],
           ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${escapeHtml(String(v))}</div></div>`).join("");
           const root = d.merkle_root || "";
@@ -1710,10 +1821,11 @@
         const pnl = Number(e.pnl) || 0;
         const lev = e.leverage ? " " + e.leverage + "x" : "";
         const auto = e.autonomous ? '<span class="flag auto">auto</span>' : "";
+        const source = e.pnl_source || e.label || "";
         return `<div class="mission tap" data-mi="${i}">`
           + `<div class="flight"><span class="fsym">Mission #${e.mission_no}</span><span class="flag ${escapeHtml(e.label)}">${escapeHtml(e.label)}</span>${auto}<span class="fpnl ${pnl >= 0 ? "up" : "down"}">${fmtPnl(e.pnl)}</span></div>`
           + `<div class="fmeta">${escapeHtml(e.symbol)} · ${escapeHtml((e.side || e.action) + lev)}${e.reason ? " · " + escapeHtml(e.reason) : ""}</div>`
-          + `<div class="fhash">${escapeHtml((e.hash || "").slice(0, 20))}… · ${escapeHtml(when)} · <span class="replayhint">▶ replay</span></div>`
+          + `<div class="fhash">${escapeHtml(source)} · ${escapeHtml((e.hash || "").slice(0, 20))}… · ${escapeHtml(when)} · <span class="replayhint">▶ replay</span></div>`
           + `</div>`;
       }
 
@@ -1730,7 +1842,8 @@
         if (e.side) steps.push(["🧭", "Direction", e.side.toUpperCase() + (e.leverage ? " " + e.leverage + "x" : "")]);
         if (e.entry && Number(e.entry) > 0) steps.push(["🎯", "Entry", formatPrice(e.entry)]);
         if (e.exit && Number(e.exit) > 0) steps.push(["🏁", "Exit", formatPrice(e.exit)]);
-        steps.push(["📊", "Result · " + e.label, fmtPnl(e.pnl) + (e.label === "paper" ? " USDT (paper)" : " USDT"), pnl >= 0 ? "up" : "down"]);
+        const source = e.pnl_source || e.label || "";
+        steps.push(["📊", "Result · " + source, fmtPnl(e.pnl) + " USDT (" + source + ")", pnl >= 0 ? "up" : "down"]);
         steps.push(["🔒", "Verified hash", (e.hash || "").slice(0, 32) + "…"]);
         $("replay-title").textContent = "Mission #" + e.mission_no + " · Replay";
         $("replay-steps").innerHTML = steps.map((s) => replayStep(s[0], s[1], s[2], s[3])).join("");
@@ -1843,7 +1956,7 @@
         });
         const wr = (wins + losses) ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0;
         $("report").innerHTML = [
-          ["Runs", histRuns.length, ""], ["Trades", trades, ""], ["Win rate", wr + "%", ""],
+          ["Runs", histRuns.length, ""], ["Trades", trades, ""], ["Paper win rate", wr + "%", ""],
           ["Total PnL", fmtPnl(pnl), pnl >= 0 ? "up" : "down"], ["Avg / run", fmtPnl(pnl / histRuns.length), pnl >= 0 ? "up" : "down"], ["Wins / Losses", wins + " / " + losses, ""],
         ].map(([k, v, cls]) => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${escapeHtml(String(v))}</div></div>`).join("");
         // By coin, best PnL first.

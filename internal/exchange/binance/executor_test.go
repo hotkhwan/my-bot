@@ -40,6 +40,9 @@ func TestExecutorOpenPlacesEntryStopAndTakeProfitOrders(t *testing.T) {
 	if result.Mode != "binance_testnet" {
 		t.Fatalf("Mode = %q, want binance_testnet", result.Mode)
 	}
+	if result.Quantity.String() != "0.001" {
+		t.Fatalf("Quantity = %s, want rounded entry quantity 0.001", result.Quantity)
+	}
 	if !strings.Contains(result.Message, "Entry order:") {
 		t.Fatalf("Message = %q, want entry order summary", result.Message)
 	}
@@ -272,6 +275,59 @@ func TestExecutorPositionsReturnsOpenPositions(t *testing.T) {
 	}
 }
 
+func TestExecutorRealizedTradeBoundsUserTradesToEntryQuantity(t *testing.T) {
+	server := newBinanceTestServer(t)
+	defer server.Close()
+
+	executor := NewExecutor(ExecutorConfig{
+		APIKey:               "key",
+		APISecret:            "secret",
+		BaseURL:              server.URL,
+		Testnet:              true,
+		RequestTimeout:       time.Second,
+		ExchangeInfoCacheTTL: time.Minute,
+	}, testLogger())
+	executor.now = func() time.Time { return time.UnixMilli(1710000000000) }
+
+	result, ok, err := executor.RealizedTrade(context.Background(), "BTCUSDT", "long", time.UnixMilli(1700000000000), decimal.MustParse("0.010"))
+	if err != nil || !ok {
+		t.Fatalf("RealizedTrade = (%+v, %v, %v), want result", result, ok, err)
+	}
+	if result.RealizedPnL.String() != "1.4" {
+		t.Fatalf("net pnl = %s, want 1.4 (mission fills only, fees included)", result.RealizedPnL)
+	}
+	if result.ExitPrice.String() != "102" {
+		t.Fatalf("exit price = %s, want weighted SELL average 102", result.ExitPrice)
+	}
+	if result.ClosedAt.UnixMilli() != 1700000003000 {
+		t.Fatalf("closed_at = %d, want latest exit trade time", result.ClosedAt.UnixMilli())
+	}
+}
+
+func TestExecutorRealizedTradeRequiresExitSideFill(t *testing.T) {
+	server := newBinanceTestServer(t)
+	server.entryOnlyTrades = true
+	defer server.Close()
+
+	executor := NewExecutor(ExecutorConfig{
+		APIKey:               "key",
+		APISecret:            "secret",
+		BaseURL:              server.URL,
+		Testnet:              true,
+		RequestTimeout:       time.Second,
+		ExchangeInfoCacheTTL: time.Minute,
+	}, testLogger())
+	executor.now = func() time.Time { return time.UnixMilli(1710000000000) }
+
+	result, ok, err := executor.RealizedTrade(context.Background(), "BTCUSDT", "long", time.UnixMilli(1700000000000), decimal.MustParse("0.010"))
+	if err != nil {
+		t.Fatalf("RealizedTrade error = %v", err)
+	}
+	if ok {
+		t.Fatalf("RealizedTrade = %+v ok=true, want no result until an exit-side fill closes entry quantity", result)
+	}
+}
+
 func TestExecutorRefusesNonTestnetWhenRealTradingDisabled(t *testing.T) {
 	executor := NewExecutor(ExecutorConfig{
 		APIKey:    "key",
@@ -291,10 +347,11 @@ func TestExecutorRefusesNonTestnetWhenRealTradingDisabled(t *testing.T) {
 
 type binanceTestServer struct {
 	*httptest.Server
-	mu           sync.Mutex
-	requests     []recordedRequest
-	orderID      int64
-	failStopLoss bool // when true, the STOP_MARKET algo order is rejected
+	mu              sync.Mutex
+	requests        []recordedRequest
+	orderID         int64
+	failStopLoss    bool // when true, the STOP_MARKET algo order is rejected
+	entryOnlyTrades bool
 }
 
 type recordedRequest struct {
@@ -368,6 +425,13 @@ func newBinanceTestServer(t *testing.T) *binanceTestServer {
 		case "/fapi/v3/positionRisk":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","positionAmt":"0.010","entryPrice":"67500.0","markPrice":"68000.50","unRealizedProfit":"5.50","leverage":"3","marginType":"isolated","positionSide":"BOTH"},{"symbol":"ETHUSDT","positionAmt":"0","entryPrice":"0","markPrice":"0","unRealizedProfit":"0","leverage":"2","marginType":"isolated","positionSide":"BOTH"}]`))
+		case "/fapi/v1/userTrades":
+			w.WriteHeader(http.StatusOK)
+			if server.entryOnlyTrades {
+				_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","side":"BUY","price":"100","qty":"0.010","realizedPnl":"0","commission":"0.01","time":1700000001000}]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{"symbol":"BTCUSDT","side":"BUY","price":"100","qty":"0.010","realizedPnl":"0","commission":"0.01","time":1700000001000},{"symbol":"BTCUSDT","side":"SELL","price":"101","qty":"0.005","realizedPnl":"0.75","commission":"0.05","time":1700000002000},{"symbol":"BTCUSDT","side":"SELL","price":"103","qty":"0.005","realizedPnl":"0.75","commission":"0.05","time":1700000003000},{"symbol":"BTCUSDT","side":"SELL","price":"90","qty":"0.010","realizedPnl":"-3.00","commission":"0.05","time":1700000004000}]`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

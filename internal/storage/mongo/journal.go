@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ type journalDoc struct {
 	Side           string    `bson:"side"`
 	Strategy       string    `bson:"strategy,omitempty"`
 	Models         []string  `bson:"models,omitempty"`
+	Reason         string    `bson:"reason,omitempty"`
+	Confidence     int       `bson:"confidence,omitempty"`
 	Leverage       int       `bson:"leverage"`
 	Mode           string    `bson:"mode"`
 	Entry          string    `bson:"entry"`
@@ -50,8 +53,8 @@ func (s *Store) Journal() *JournalRepository {
 	return &JournalRepository{coll: s.journalTrades}
 }
 
-// Save upserts a trade by id, so a trade recorded when opened can be updated
-// when it closes.
+// Save inserts open trades idempotently. Duplicate open writes use $setOnInsert
+// so a closed row can never be overwritten back to open.
 func (r *JournalRepository) Save(ctx context.Context, trade journal.Trade) error {
 	doc := journalDoc{
 		ID:             trade.ID,
@@ -62,6 +65,8 @@ func (r *JournalRepository) Save(ctx context.Context, trade journal.Trade) error
 		Side:           trade.Side,
 		Strategy:       trade.Strategy,
 		Models:         trade.Models,
+		Reason:         trade.Reason,
+		Confidence:     trade.Confidence,
 		Leverage:       trade.Leverage,
 		Mode:           trade.Mode,
 		Entry:          trade.Entry.String(),
@@ -75,10 +80,46 @@ func (r *JournalRepository) Save(ctx context.Context, trade journal.Trade) error
 		OpenedAt:       trade.OpenedAt,
 		ClosedAt:       trade.ClosedAt,
 	}
+	if trade.Outcome == journal.OutcomeOpen {
+		if _, err := r.coll.UpdateOne(ctx,
+			bson.M{"_id": trade.ID},
+			bson.M{"$setOnInsert": doc},
+			options.UpdateOne().SetUpsert(true),
+		); err != nil {
+			return fmt.Errorf("save open journal trade: %w", err)
+		}
+		return nil
+	}
 	if _, err := r.coll.ReplaceOne(ctx, bson.M{"_id": trade.ID}, doc, options.Replace().SetUpsert(true)); err != nil {
 		return fmt.Errorf("save journal trade: %w", err)
 	}
 	return nil
+}
+
+// Close atomically updates one still-open journal trade.
+func (r *JournalRepository) Close(ctx context.Context, id string, update journal.CloseUpdate) (journal.Trade, bool, error) {
+	set := bson.M{
+		"exit":      update.Exit.String(),
+		"pnl_usdt":  update.PnLUSDT.String(),
+		"outcome":   string(update.Outcome),
+		"closed_at": update.ClosedAt,
+	}
+	if strings.TrimSpace(update.Mode) != "" {
+		set["mode"] = update.Mode
+	}
+	var doc journalDoc
+	err := r.coll.FindOneAndUpdate(ctx,
+		bson.M{"_id": id, "outcome": string(journal.OutcomeOpen)},
+		bson.M{"$set": set},
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	).Decode(&doc)
+	if errors.Is(err, mongodriver.ErrNoDocuments) {
+		return journal.Trade{}, false, nil
+	}
+	if err != nil {
+		return journal.Trade{}, false, fmt.Errorf("close journal trade: %w", err)
+	}
+	return tradeFromDoc(doc), true, nil
 }
 
 // List returns the trades matching filter.
@@ -102,6 +143,9 @@ func (r *JournalRepository) List(ctx context.Context, filter journal.Filter) ([]
 	if filter.ClosedOnly {
 		query["outcome"] = bson.M{"$ne": string(journal.OutcomeOpen)}
 	}
+	if filter.OpenOnly {
+		query["outcome"] = string(journal.OutcomeOpen)
+	}
 
 	cursor, err := r.coll.Find(ctx, query)
 	if err != nil {
@@ -114,30 +158,36 @@ func (r *JournalRepository) List(ctx context.Context, filter journal.Filter) ([]
 
 	trades := make([]journal.Trade, 0, len(docs))
 	for _, doc := range docs {
-		trades = append(trades, journal.Trade{
-			ID:             doc.ID,
-			UserID:         doc.UserID,
-			CampaignID:     doc.CampaignID,
-			ConfirmationID: doc.ConfirmationID,
-			Symbol:         doc.Symbol,
-			Side:           doc.Side,
-			Strategy:       doc.Strategy,
-			Models:         doc.Models,
-			Leverage:       doc.Leverage,
-			Mode:           doc.Mode,
-			Entry:          parseDecimal(doc.Entry),
-			Exit:           parseDecimal(doc.Exit),
-			StopLoss:       parseDecimal(doc.StopLoss),
-			TakeProfit:     parseDecimal(doc.TakeProfit),
-			SizeUSDT:       parseDecimal(doc.SizeUSDT),
-			Quantity:       parseDecimal(doc.Quantity),
-			PnLUSDT:        parseDecimal(doc.PnLUSDT),
-			Outcome:        journal.Outcome(doc.Outcome),
-			OpenedAt:       doc.OpenedAt,
-			ClosedAt:       doc.ClosedAt,
-		})
+		trades = append(trades, tradeFromDoc(doc))
 	}
 	return trades, nil
+}
+
+func tradeFromDoc(doc journalDoc) journal.Trade {
+	return journal.Trade{
+		ID:             doc.ID,
+		UserID:         doc.UserID,
+		CampaignID:     doc.CampaignID,
+		ConfirmationID: doc.ConfirmationID,
+		Symbol:         doc.Symbol,
+		Side:           doc.Side,
+		Strategy:       doc.Strategy,
+		Models:         doc.Models,
+		Reason:         doc.Reason,
+		Confidence:     doc.Confidence,
+		Leverage:       doc.Leverage,
+		Mode:           doc.Mode,
+		Entry:          parseDecimal(doc.Entry),
+		Exit:           parseDecimal(doc.Exit),
+		StopLoss:       parseDecimal(doc.StopLoss),
+		TakeProfit:     parseDecimal(doc.TakeProfit),
+		SizeUSDT:       parseDecimal(doc.SizeUSDT),
+		Quantity:       parseDecimal(doc.Quantity),
+		PnLUSDT:        parseDecimal(doc.PnLUSDT),
+		Outcome:        journal.Outcome(doc.Outcome),
+		OpenedAt:       doc.OpenedAt,
+		ClosedAt:       doc.ClosedAt,
+	}
 }
 
 func parseDecimal(s string) decimal.Decimal {

@@ -34,6 +34,7 @@ const (
 type Decision struct {
 	Action            DecisionAction `json:"action"`
 	Symbol            string         `json:"symbol"`
+	Strategy          string         `json:"strategy,omitempty"`
 	Side              string         `json:"side,omitempty"`
 	Leverage          int            `json:"leverage,omitempty"`
 	Entry             string         `json:"entry,omitempty"`
@@ -127,7 +128,17 @@ func openDecisionToIntent(decision Decision, maxLeverage int) (domain.Intent, er
 		strings.TrimSpace(decision.TakeProfit),
 		size,
 	)
-	return parser.Parse(command, parser.Options{MaxLeverage: maxLeverage})
+	intent, err := parser.Parse(command, parser.Options{MaxLeverage: maxLeverage})
+	if err != nil {
+		return domain.Intent{}, err
+	}
+	if intent.Open != nil {
+		intent.Open.Strategy = strings.TrimSpace(decision.Strategy)
+		intent.Open.Models = append([]string(nil), decision.Models...)
+		intent.Open.Reason = strings.TrimSpace(decision.Reason)
+		intent.Open.Confidence = decision.ConfidencePercent
+	}
+	return intent, nil
 }
 
 func closeDecisionToIntent(decision Decision) (domain.Intent, error) {

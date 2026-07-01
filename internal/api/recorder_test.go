@@ -11,6 +11,7 @@ import (
 	"bottrade/internal/auth"
 	"bottrade/internal/decimal"
 	"bottrade/internal/journal"
+	"bottrade/internal/transparency"
 )
 
 func TestRecorderFeed(t *testing.T) {
@@ -60,6 +61,7 @@ func TestRecorderFeed(t *testing.T) {
 		Entries []struct {
 			MissionNo  int    `json:"mission_no"`
 			Label      string `json:"label"`
+			PnLSource  string `json:"pnl_source"`
 			Autonomous bool   `json:"autonomous"`
 			Leverage   int    `json:"leverage"`
 			Reason     string `json:"reason"`
@@ -91,6 +93,9 @@ func TestRecorderFeed(t *testing.T) {
 		if e.Label != "testnet" {
 			t.Fatalf("label = %q, want testnet", e.Label)
 		}
+		if e.PnLSource != "testnet" {
+			t.Fatalf("pnl_source = %q, want testnet", e.PnLSource)
+		}
 		if len(e.Hash) != 64 {
 			t.Fatalf("hash len = %d, want 64", len(e.Hash))
 		}
@@ -121,5 +126,19 @@ func TestRecorderFeed(t *testing.T) {
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("no-auth status = %d, want 401", resp2.StatusCode)
+	}
+}
+
+func TestRecorderPnLSourceMapping(t *testing.T) {
+	cases := map[string]string{
+		transparency.LabelPaper: "paper",
+		"testnet":               "testnet",
+		"live":                  "exchange_realized",
+		"unknown":               "unknown",
+	}
+	for label, want := range cases {
+		if got := recorderPnLSource(label); got != want {
+			t.Fatalf("recorderPnLSource(%q) = %q, want %q", label, got, want)
+		}
 	}
 }

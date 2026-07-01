@@ -55,14 +55,20 @@ type OpenIntent struct {
 	TakeProfits []decimal.Decimal
 	Size        OrderSize
 	PlanID      string
+	Strategy    string
+	Models      []string
+	Reason      string
+	Confidence  int
+	CampaignID  string
 }
 
 type CloseIntent struct {
-	Symbol          string
-	All             bool
-	Percent         decimal.Decimal
-	HasPercent      bool
-	ResolvedPercent decimal.Decimal
+	Symbol              string
+	All                 bool
+	Percent             decimal.Decimal
+	HasPercent          bool
+	ResolvedPercent     decimal.Decimal
+	EntryConfirmationID string
 }
 
 type BreakevenIntent struct {

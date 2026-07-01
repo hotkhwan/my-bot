@@ -1,0 +1,51 @@
+name: Deploy to Fly.io (production)
+
+# Auto-deploy: every push to main ships to the Fly PROD app (joinanny) at
+# https://app.joinanny.com using fly.prod.toml. Requires the repo secret
+# FLY_API_TOKEN (same token as the testnet workflow, or a prod-scoped one).
+#
+# Safety:
+#   - joinanny is still TESTNET-flagged (real trading OFF) in fly.prod.toml until a
+#     deliberate go-live that has passed the Legal Gate + opBNB milestone.
+#   - Protect the `production` GitHub environment (Settings -> Environments ->
+#     production) with required reviewers so a push to main cannot ship without
+#     human approval.
+#   - Tests must pass before the deploy job runs.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-main-prod
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go test ./...
+
+  deploy:
+    name: Deploy main -> joinanny prod
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy prod
+        # -c selects the prod config (app = joinanny); --ha=false keeps one machine
+        # per process group so the worker stays a single Telegram poller.
+        run: flyctl deploy --remote-only --ha=false -c fly.prod.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

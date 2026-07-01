@@ -106,20 +106,36 @@ func (s *Server) handleConfirm(c fiber.Ctx) error {
 	}
 
 	if body.Cancel {
-		s.timedMissions.Delete(body.ID)
+		s.cancelAwaitingScheduledClose(c.Context(), body.ID, "mission cancelled")
 		if err := s.orders.Cancel(c.Context(), userID, body.ID); err != nil {
 			return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 		}
 		return c.JSON(fiber.Map{"output": "Cancelled."})
 	}
 
-	result, err := s.orders.Confirm(c.Context(), userID, body.ID)
+	var result orders.ExecutionResult
+	var err error
+	if s.armedMissionRuntimeAllowed() {
+		if !s.hasActiveKeyForSubject(c.Context(), claimsOf(c).Subject) {
+			return c.JSON(fiber.Map{
+				"output":   "🔑 No active testnet Binance key is available for this confirmation. Open Settings, make a testnet key active, then stage the Mission again.",
+				"need_key": true,
+			})
+		}
+		result, err = s.orders.ConfirmWithRequiredUserExecutor(c.Context(), userID, body.ID)
+	} else {
+		result, err = s.orders.Confirm(c.Context(), userID, body.ID)
+	}
 	if err != nil {
+		// Do NOT cancel the awaiting close here: a duplicate/concurrent confirm can
+		// hit "already executing" while the first call is still placing the entry.
+		// Cancelling now would drop the close for an entry that then succeeds. The
+		// reconciler resolves the awaiting close from the confirmation's durable
+		// status (executed → activate, failed/cancelled/expired → cancel).
 		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 	}
-	if value, ok := s.timedMissions.LoadAndDelete(body.ID); ok {
-		s.scheduleTimedMissionClose(value.(timedMission))
-	}
+	// Entry executed → arm the durable plan-end close (safe no-op if none awaits).
+	s.activateScheduledClose(c.Context(), body.ID)
 	out := result.Message
 	if strings.TrimSpace(out) == "" {
 		out = "✅ " + result.Mode + " " + result.ClientOrderID

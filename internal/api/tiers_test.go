@@ -202,10 +202,21 @@ func TestMissionRequiresActiveKey(t *testing.T) {
 	}
 
 	// No active key yet → blocked with a Settings nudge.
-	if out, need := prepare(); !need || !strings.Contains(out, "No active Binance key") {
+	if out, need := prepare(); !need || !strings.Contains(out, "No active testnet Binance key") {
 		t.Fatalf("without key: need=%v out=%q, want need_key + nudge", need, out)
 	}
-	// Activate a key → the mission flows to the Confirm step.
+	// A mainnet profile is not enough for testnet Missions.
+	if err := credSvc.StoreProfile(context.Background(), "tg:7", "mainnet",
+		auth.BinanceKeys{APIKey: "k-main1234", APISecret: "s-main1234", Testnet: false}); err != nil {
+		t.Fatalf("store mainnet profile: %v", err)
+	}
+	if err := credSvc.SetActive(context.Background(), "tg:7", "mainnet"); err != nil {
+		t.Fatalf("set mainnet active: %v", err)
+	}
+	if out, need := prepare(); !need || !strings.Contains(out, "No active testnet Binance key") {
+		t.Fatalf("with mainnet active key: need=%v out=%q, want testnet-key nudge", need, out)
+	}
+	// Activate a testnet key → the mission flows to the Confirm step.
 	if err := credSvc.StoreProfile(context.Background(), "tg:7", "testnet",
 		auth.BinanceKeys{APIKey: "k-abcd1234", APISecret: "s-abcd1234", Testnet: true}); err != nil {
 		t.Fatalf("store profile: %v", err)

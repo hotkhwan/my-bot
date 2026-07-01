@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,6 +120,111 @@ func (e *Executor) Positions(ctx context.Context) ([]domain.Position, error) {
 	return positions, nil
 }
 
+// RealizedTrade reads the closed exchange result for this mission's position.
+// It only records after exit-side fills cover the entry quantity. Commission or
+// realized-income rows alone are not enough, because those can appear at entry.
+// Funding is intentionally ignored for Mission Zero.
+func (e *Executor) RealizedTrade(ctx context.Context, symbol, side string, since time.Time, entryQty decimal.Decimal) (orders.RealizedTrade, bool, error) {
+	if err := e.validateConfig(); err != nil {
+		return orders.RealizedTrade{}, false, err
+	}
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	side = strings.ToLower(strings.TrimSpace(side))
+	if symbol == "" {
+		return orders.RealizedTrade{}, false, fmt.Errorf("realized trade symbol is required")
+	}
+	exitSide, err := closeOrderSide(side)
+	if err != nil {
+		return orders.RealizedTrade{}, false, err
+	}
+	if !entryQty.IsPositive() {
+		return orders.RealizedTrade{}, false, fmt.Errorf("realized trade entry quantity is required")
+	}
+
+	trades, err := e.userTrades(ctx, symbol, since)
+	if err != nil {
+		return orders.RealizedTrade{}, false, err
+	}
+	sort.SliceStable(trades, func(i, j int) bool {
+		return trades[i].Time < trades[j].Time
+	})
+
+	net := decimal.Zero()
+	qtySum := decimal.Zero()
+	notionalSum := decimal.Zero()
+	remaining := entryQty
+	var closedAt time.Time
+	for _, trade := range trades {
+		if !strings.EqualFold(trade.Symbol, symbol) || !strings.EqualFold(trade.Side, exitSide) {
+			continue
+		}
+		qty, err := decimal.Parse(defaultDecimalString(trade.Qty))
+		if err != nil {
+			return orders.RealizedTrade{}, false, fmt.Errorf("parse exit quantity for %s: %w", symbol, err)
+		}
+		if !qty.IsPositive() {
+			continue
+		}
+		price, err := decimal.Parse(defaultDecimalString(trade.Price))
+		if err != nil {
+			return orders.RealizedTrade{}, false, fmt.Errorf("parse exit price for %s: %w", symbol, err)
+		}
+		if !price.IsPositive() {
+			continue
+		}
+		pnl, err := decimal.Parse(defaultDecimalString(trade.RealizedPnL))
+		if err != nil {
+			return orders.RealizedTrade{}, false, fmt.Errorf("parse exit realized pnl for %s: %w", symbol, err)
+		}
+		commission, err := decimal.Parse(defaultDecimalString(trade.Commission))
+		if err != nil {
+			return orders.RealizedTrade{}, false, fmt.Errorf("parse exit commission for %s: %w", symbol, err)
+		}
+
+		includeQty := qty
+		includePnL := pnl
+		includeCommission := commission.Abs()
+		if qty.Cmp(remaining) > 0 {
+			includeQty = remaining
+			ratio, err := remaining.QuoFloor(qty, 16)
+			if err != nil {
+				return orders.RealizedTrade{}, false, fmt.Errorf("prorate exit fill for %s: %w", symbol, err)
+			}
+			includePnL = pnl.Mul(ratio)
+			includeCommission = includeCommission.Mul(ratio)
+		}
+
+		net = net.Add(includePnL).Sub(includeCommission)
+		notionalSum = notionalSum.Add(price.Mul(includeQty))
+		qtySum = qtySum.Add(includeQty)
+		remaining = remaining.Sub(includeQty)
+		closedAt = unixMillis(trade.Time)
+		if !remaining.IsPositive() {
+			break
+		}
+	}
+	if remaining.IsPositive() {
+		return orders.RealizedTrade{}, false, nil
+	}
+
+	exitPrice := decimal.Zero()
+	if qtySum.IsPositive() {
+		if avg, err := notionalSum.QuoFloor(qtySum, 8); err == nil {
+			exitPrice = avg
+		}
+	}
+	if closedAt.IsZero() {
+		closedAt = e.now().UTC()
+	}
+	return orders.RealizedTrade{
+		Symbol:      symbol,
+		Side:        side,
+		ExitPrice:   exitPrice,
+		RealizedPnL: net,
+		ClosedAt:    closedAt,
+	}, true, nil
+}
+
 func (e *Executor) validateConfig() error {
 	if strings.TrimSpace(e.cfg.APIKey) == "" || strings.TrimSpace(e.cfg.APISecret) == "" {
 		return fmt.Errorf("BINANCE_API_KEY and BINANCE_API_SECRET are required for Binance execution")
@@ -221,6 +327,7 @@ func (e *Executor) executeOpen(ctx context.Context, confirmation orders.Confirma
 	return orders.ExecutionResult{
 		Mode:          e.mode(),
 		ClientOrderID: entryOrder.ClientOrderID,
+		Quantity:      quantity,
 		Message: fmt.Sprintf(
 			"%s order submitted.\n\n%s\n\nRounded quantity: %s\nEntry order: %s #%d\nSL order: %s #%d\nTP order: %s #%d",
 			strings.ToUpper(e.mode()),
@@ -319,6 +426,7 @@ func (e *Executor) executeClose(ctx context.Context, confirmation orders.Confirm
 
 	responses := make([]orderResponse, 0, len(positions))
 	realized := decimal.Zero()
+	exitPrice := decimal.Zero()
 	var closedSymbol, closedSide string
 	for _, position := range positions {
 		if intent.Symbol != "" && position.Symbol != intent.Symbol {
@@ -363,6 +471,9 @@ func (e *Executor) executeClose(ctx context.Context, confirmation orders.Confirm
 		if profit, perr := decimal.Parse(defaultDecimalString(position.UnrealizedProfit)); perr == nil {
 			realized = realized.Add(profit)
 		}
+		if price, perr := decimal.Parse(defaultDecimalString(position.MarkPrice)); perr == nil {
+			exitPrice = price
+		}
 
 		response, err := e.newOrder(ctx, url.Values{
 			"symbol":           {position.Symbol},
@@ -374,6 +485,9 @@ func (e *Executor) executeClose(ctx context.Context, confirmation orders.Confirm
 		})
 		if err != nil {
 			return orders.ExecutionResult{}, fmt.Errorf("place close order for %s: %w", position.Symbol, err)
+		}
+		if price, perr := decimal.Parse(defaultDecimalString(response.AvgPrice)); perr == nil && price.IsPositive() {
+			exitPrice = price
 		}
 		responses = append(responses, response)
 	}
@@ -392,6 +506,7 @@ func (e *Executor) executeClose(ctx context.Context, confirmation orders.Confirm
 		ClientOrderID: responses[0].ClientOrderID,
 		Symbol:        closedSymbol,
 		Side:          closedSide,
+		ExitPrice:     exitPrice,
 		RealizedPnL:   realized,
 		Message:       strings.ToUpper(e.mode()) + " close submitted.\n\n" + orders.Summary(confirmation.Intent) + "\n\nOrders:\n" + strings.Join(lines, "\n"),
 	}, nil
@@ -439,6 +554,17 @@ func orderSides(side domain.Side) (string, string) {
 		return "SELL", "BUY"
 	}
 	return "BUY", "SELL"
+}
+
+func closeOrderSide(side string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(side)) {
+	case "long":
+		return "SELL", nil
+	case "short":
+		return "BUY", nil
+	default:
+		return "", fmt.Errorf("realized trade side must be long or short")
+	}
 }
 
 func positionFromRisk(risk positionRisk) (domain.Position, bool, error) {
@@ -899,6 +1025,19 @@ type orderResponse struct {
 	Status        string `json:"status"`
 	Type          string `json:"type"`
 	ExecutedQty   string `json:"executedQty"`
+	AvgPrice      string `json:"avgPrice"`
+}
+
+func (e *Executor) userTrades(ctx context.Context, symbol string, since time.Time) ([]userTradeRow, error) {
+	params := url.Values{"symbol": {symbol}, "limit": {"1000"}}
+	if !since.IsZero() {
+		params.Set("startTime", strconv.FormatInt(since.UnixMilli(), 10))
+	}
+	var response []userTradeRow
+	if err := e.signedRequest(ctx, http.MethodGet, "/fapi/v1/userTrades", params, &response); err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
 // algoOrderResponse is the response shape of /fapi/v1/algoOrder, which uses
@@ -920,6 +1059,23 @@ type positionRisk struct {
 	Leverage         string `json:"leverage"`
 	MarginType       string `json:"marginType"`
 	PositionSide     string `json:"positionSide"`
+}
+
+type userTradeRow struct {
+	Symbol      string `json:"symbol"`
+	Side        string `json:"side"`
+	Price       string `json:"price"`
+	Qty         string `json:"qty"`
+	RealizedPnL string `json:"realizedPnl"`
+	Commission  string `json:"commission"`
+	Time        int64  `json:"time"`
+}
+
+func unixMillis(value int64) time.Time {
+	if value <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(value).UTC()
 }
 
 type apiError struct {

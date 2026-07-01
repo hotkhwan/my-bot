@@ -3,6 +3,7 @@ package journal
 import (
 	"context"
 	"testing"
+	"time"
 
 	"bottrade/internal/decimal"
 )
@@ -14,6 +15,64 @@ func newService(t *testing.T) *Service {
 		t.Fatalf("NewService: %v", err)
 	}
 	return svc
+}
+
+func TestCloseIsSingleWinner(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	opened := closedTrade("entry-1", OutcomeOpen, "0")
+	opened.OpenedAt = time.Unix(100, 0)
+	mustRecord(t, svc, opened)
+
+	closed, ok, err := svc.Close(ctx, "entry-1", CloseUpdate{
+		Exit:     decimal.MustParse("102"),
+		PnLUSDT:  decimal.MustParse("2"),
+		Outcome:  OutcomeWin,
+		ClosedAt: time.Unix(200, 0),
+	})
+	if err != nil || !ok {
+		t.Fatalf("Close = (%+v, %v, %v), want updated", closed, ok, err)
+	}
+	if closed.Outcome != OutcomeWin || closed.PnLUSDT.String() != "2" || closed.Exit.String() != "102" {
+		t.Fatalf("closed trade = %+v, want win with exit/pnl", closed)
+	}
+	if _, ok, err := svc.Close(ctx, "entry-1", CloseUpdate{PnLUSDT: decimal.MustParse("-1"), Outcome: OutcomeLoss}); err != nil || ok {
+		t.Fatalf("second Close ok=%v err=%v, want single-winner no-op", ok, err)
+	}
+}
+
+func TestOpenRecordDoesNotOverwriteClosedTrade(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	opened := closedTrade("entry-1", OutcomeOpen, "0")
+	opened.OpenedAt = time.Unix(100, 0)
+	mustRecord(t, svc, opened)
+
+	if _, ok, err := svc.Close(ctx, "entry-1", CloseUpdate{
+		Exit:     decimal.MustParse("102"),
+		PnLUSDT:  decimal.MustParse("2"),
+		Outcome:  OutcomeWin,
+		ClosedAt: time.Unix(200, 0),
+	}); err != nil || !ok {
+		t.Fatalf("Close ok=%v err=%v, want success", ok, err)
+	}
+	opened.Entry = decimal.MustParse("99")
+	mustRecord(t, svc, opened)
+
+	closed, err := svc.List(ctx, Filter{ClosedOnly: true})
+	if err != nil {
+		t.Fatalf("List closed: %v", err)
+	}
+	if len(closed) != 1 || closed[0].Outcome != OutcomeWin || closed[0].Entry.String() != "0" {
+		t.Fatalf("closed rows = %+v, want original closed row not revived/overwritten", closed)
+	}
+	open, err := svc.List(ctx, Filter{OpenOnly: true})
+	if err != nil {
+		t.Fatalf("List open: %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("open rows = %+v, want no revived open row", open)
+	}
 }
 
 func closedTrade(id string, outcome Outcome, pnl string) Trade {

@@ -20,24 +20,75 @@ func (s stubExecutor) Execute(context.Context, Confirmation) (ExecutionResult, e
 	return s.result, nil
 }
 
-type recordingJournal struct{ trades []journal.Trade }
+type recordingJournal struct {
+	trades []journal.Trade
+	byID   map[string]journal.Trade
+}
 
 func (r *recordingJournal) Record(_ context.Context, trade journal.Trade) error {
+	if r.byID == nil {
+		r.byID = map[string]journal.Trade{}
+	}
 	r.trades = append(r.trades, trade)
+	r.byID[trade.ID] = trade
 	return nil
 }
 
-func TestServiceJournalsClosedTradeOnly(t *testing.T) {
+func (r *recordingJournal) Close(_ context.Context, id string, update journal.CloseUpdate) (journal.Trade, bool, error) {
+	if r.byID == nil {
+		r.byID = map[string]journal.Trade{}
+	}
+	trade, ok := r.byID[id]
+	if !ok || trade.Outcome != journal.OutcomeOpen {
+		return journal.Trade{}, false, nil
+	}
+	trade.Exit = update.Exit
+	trade.PnLUSDT = update.PnLUSDT
+	trade.Outcome = update.Outcome
+	trade.ClosedAt = update.ClosedAt
+	if update.Mode != "" {
+		trade.Mode = update.Mode
+	}
+	r.byID[id] = trade
+	for i := range r.trades {
+		if r.trades[i].ID == id {
+			r.trades[i] = trade
+		}
+	}
+	return trade, true, nil
+}
+
+func TestServiceJournalsOpenAndStandaloneClosedTrade(t *testing.T) {
 	jrnl := &recordingJournal{}
 	exec := stubExecutor{result: ExecutionResult{
 		Mode:          "binance_testnet",
 		ClientOrderID: "close-1",
+		Quantity:      decimal.MustParse("0.001"),
 		Symbol:        "BTCUSDT",
 		Side:          "long",
 		RealizedPnL:   decimal.MustParse("2.5"),
 	}}
 	service := NewServiceWithRepositories(5*time.Minute, exec, ServiceDependencies{Journal: jrnl}, testLogger())
 	ctx := context.Background()
+
+	openConf, err := service.Prepare(ctx, 12345, testOpenIntent())
+	if err != nil {
+		t.Fatalf("Prepare open: %v", err)
+	}
+	if _, err := service.Confirm(ctx, 12345, openConf.ID); err != nil {
+		t.Fatalf("Confirm open: %v", err)
+	}
+	if len(jrnl.trades) != 1 {
+		t.Fatalf("journaled %d trades after open, want 1", len(jrnl.trades))
+	}
+	open := jrnl.trades[0]
+	if open.ID != openConf.ID || open.Outcome != journal.OutcomeOpen || open.Strategy != "anny_basic_v1.2" ||
+		open.Reason != "CDC and QQE aligned" || open.CampaignID != "mission" {
+		t.Fatalf("open journal row = %+v, want persisted mission context", open)
+	}
+	if open.Quantity.String() != "0.001" {
+		t.Fatalf("open quantity = %s, want exchange execution quantity 0.001", open.Quantity)
+	}
 
 	closeIntent := domain.Intent{
 		Type:  domain.IntentClose,
@@ -51,15 +102,45 @@ func TestServiceJournalsClosedTradeOnly(t *testing.T) {
 		t.Fatalf("Confirm close: %v", err)
 	}
 
-	if len(jrnl.trades) != 1 {
-		t.Fatalf("journaled %d trades, want 1 (the close)", len(jrnl.trades))
+	if len(jrnl.trades) != 2 {
+		t.Fatalf("journaled %d trades, want open + standalone close", len(jrnl.trades))
 	}
-	tr := jrnl.trades[0]
+	tr := jrnl.trades[1]
 	if tr.Outcome != journal.OutcomeWin || tr.PnLUSDT.String() != "2.5" || tr.Symbol != "BTCUSDT" || tr.Side != "long" || tr.UserID != 12345 {
 		t.Fatalf("journaled trade = %+v, want win 2.5 BTCUSDT long for user 12345", tr)
 	}
+}
 
-	// An open must NOT be journaled (only resolved round-trips are counted).
+func TestServiceSkipsDryRunOpenJournal(t *testing.T) {
+	jrnl := &recordingJournal{}
+	service := NewServiceWithRepositories(5*time.Minute, DryRunExecutor{DryRun: true}, ServiceDependencies{Journal: jrnl}, testLogger())
+	ctx := context.Background()
+
+	conf, err := service.Prepare(ctx, 12345, testOpenIntent())
+	if err != nil {
+		t.Fatalf("Prepare open: %v", err)
+	}
+	if _, err := service.Confirm(ctx, 12345, conf.ID); err != nil {
+		t.Fatalf("Confirm open: %v", err)
+	}
+	if len(jrnl.trades) != 0 {
+		t.Fatalf("journaled %d dry-run trades, want none", len(jrnl.trades))
+	}
+}
+
+func TestServiceCorrelatedCloseUpdatesOpenJournalRow(t *testing.T) {
+	jrnl := &recordingJournal{}
+	exec := stubExecutor{result: ExecutionResult{
+		Mode:          "binance_testnet",
+		ClientOrderID: "close-1",
+		Symbol:        "BTCUSDT",
+		Side:          "long",
+		ExitPrice:     decimal.MustParse("101"),
+		RealizedPnL:   decimal.MustParse("-1.25"),
+	}}
+	service := NewServiceWithRepositories(5*time.Minute, exec, ServiceDependencies{Journal: jrnl}, testLogger())
+	ctx := context.Background()
+
 	openConf, err := service.Prepare(ctx, 12345, testOpenIntent())
 	if err != nil {
 		t.Fatalf("Prepare open: %v", err)
@@ -67,8 +148,22 @@ func TestServiceJournalsClosedTradeOnly(t *testing.T) {
 	if _, err := service.Confirm(ctx, 12345, openConf.ID); err != nil {
 		t.Fatalf("Confirm open: %v", err)
 	}
+	closeIntent := domain.Intent{Type: domain.IntentClose, Close: &domain.CloseIntent{
+		Symbol: "BTCUSDT", All: true, ResolvedPercent: decimal.NewFromInt(100), EntryConfirmationID: openConf.ID,
+	}}
+	closeConf, err := service.Prepare(ctx, 12345, closeIntent)
+	if err != nil {
+		t.Fatalf("Prepare close: %v", err)
+	}
+	if _, err := service.Confirm(ctx, 12345, closeConf.ID); err != nil {
+		t.Fatalf("Confirm close: %v", err)
+	}
 	if len(jrnl.trades) != 1 {
-		t.Fatalf("journaled %d trades after an open, want still 1", len(jrnl.trades))
+		t.Fatalf("journaled %d trades, want one updated round-trip row", len(jrnl.trades))
+	}
+	tr := jrnl.trades[0]
+	if tr.ID != openConf.ID || tr.Outcome != journal.OutcomeLoss || tr.PnLUSDT.String() != "-1.25" || tr.Exit.String() != "101" {
+		t.Fatalf("updated journal row = %+v, want correlated loss on entry id", tr)
 	}
 }
 
@@ -109,6 +204,45 @@ func TestServiceUsesPerUserExecutorWithFallback(t *testing.T) {
 	}
 	if res2.Mode != "dry_run" {
 		t.Fatalf("mode = %q, want dry_run (fallback to default)", res2.Mode)
+	}
+}
+
+func TestServicePrepareWithIdempotencyKeyRejectsDuplicate(t *testing.T) {
+	service := NewServiceWithExecutor(5*time.Minute, DryRunExecutor{DryRun: true}, testLogger())
+	ctx := context.Background()
+	if _, err := service.PrepareWithIdempotencyKey(ctx, 12345, testOpenIntent(), "armed:one"); err != nil {
+		t.Fatalf("first prepare: %v", err)
+	}
+	if _, err := service.PrepareWithIdempotencyKey(ctx, 12345, testOpenIntent(), "armed:one"); err == nil {
+		t.Fatal("second prepare with same idempotency key succeeded, want duplicate rejection")
+	}
+}
+
+func TestServiceConfirmWithRequiredUserExecutorRejectsFallback(t *testing.T) {
+	ctx := context.Background()
+	service := NewServiceWithRepositories(5*time.Minute, DryRunExecutor{DryRun: true},
+		ServiceDependencies{ExecutorProvider: stubProvider{found: false}}, testLogger())
+	conf, err := service.Prepare(ctx, 12345, testOpenIntent())
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if _, err := service.ConfirmWithRequiredUserExecutor(ctx, 12345, conf.ID); err == nil {
+		t.Fatal("ConfirmWithRequiredUserExecutor succeeded without a per-user executor")
+	}
+
+	perUser := stubExecutor{result: ExecutionResult{Mode: "per-user", ClientOrderID: "pu"}}
+	strict := NewServiceWithRepositories(5*time.Minute, DryRunExecutor{DryRun: true},
+		ServiceDependencies{ExecutorProvider: stubProvider{executor: perUser, found: true}}, testLogger())
+	conf, err = strict.Prepare(ctx, 12345, testOpenIntent())
+	if err != nil {
+		t.Fatalf("strict prepare: %v", err)
+	}
+	res, err := strict.ConfirmWithRequiredUserExecutor(ctx, 12345, conf.ID)
+	if err != nil {
+		t.Fatalf("strict confirm: %v", err)
+	}
+	if res.Mode != "per-user" {
+		t.Fatalf("strict mode = %q, want per-user", res.Mode)
 	}
 }
 
@@ -252,6 +386,11 @@ func testOpenIntent() domain.Intent {
 				Kind:   domain.SizeUSDT,
 				Amount: decimal.MustParse("100"),
 			},
+			Strategy:   "anny_basic_v1.2",
+			Models:     []string{"rules"},
+			Reason:     "CDC and QQE aligned",
+			Confidence: 82,
+			CampaignID: "mission",
 		},
 	}
 }

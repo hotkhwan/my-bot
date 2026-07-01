@@ -72,13 +72,13 @@ type Server struct {
 	goalRuns         GoalRunStore
 	access           AccessStore
 	armedMissions    ArmedMissionStore
+	scheduledCloses  ScheduledCloseStore
 	aiSecrets        AISecretStore
 	favourites       FavouritesStore
 	keyring          *auth.Keyring
 	usage            *memUsage
 	annyBasicDecider annyBasicDecisionFunc
-	timedMissions    sync.Map // confirmation id -> timedMission; dev/testnet only
-	armedWatchers    sync.Map // armed mission id -> struct{}; phase-A observe-only watchers
+	armedWatchers    sync.Map // armed mission id -> struct{}; testnet wait-for-setup watchers
 	runtimeCtx       context.Context
 	logger           *slog.Logger
 	app              *fiber.App
@@ -153,6 +153,12 @@ func WithArmedMissionStore(store ArmedMissionStore) Option {
 	return func(s *Server) { s.armedMissions = store }
 }
 
+// WithScheduledCloseStore persists plan-end close jobs so Mission timed closes
+// survive API restarts. When unset, NewServer installs an in-memory store.
+func WithScheduledCloseStore(store ScheduledCloseStore) Option {
+	return func(s *Server) { s.scheduledCloses = store }
+}
+
 // WithFavourites persists per-user favourite coins so they follow the user
 // across clients (web + Telegram mini app), not just one device's localStorage.
 func WithFavourites(store FavouritesStore) Option {
@@ -192,6 +198,9 @@ func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Log
 	if server.armedMissions == nil {
 		server.armedMissions = newMemArmedMissions()
 	}
+	if server.scheduledCloses == nil {
+		server.scheduledCloses = newMemScheduledCloses()
+	}
 	if server.aiSecrets == nil {
 		server.aiSecrets = newMemAISecrets()
 	}
@@ -218,6 +227,8 @@ func (s *Server) Run(ctx context.Context) error {
 	if n := s.startArmedMissionWatchers(ctx); n > 0 {
 		s.logger.Info("armed missions rehydrated", "count", n)
 	}
+	s.startScheduledClosePoller(ctx)
+	s.startMissionResultReconciler(ctx)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

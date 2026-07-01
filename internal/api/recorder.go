@@ -12,16 +12,20 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-// missionReason summarises why a Mission ran, from its strategy and any AI
-// models that voted. Richer reason/confidence will come once decision context
-// is persisted alongside the trade.
-func missionReason(strategy string, models []string) string {
-	parts := make([]string, 0, 2)
+// missionReason summarises why a Mission ran, from persisted decision context.
+func missionReason(strategy string, models []string, reason string, confidence int) string {
+	parts := make([]string, 0, 4)
 	if strategy != "" {
 		parts = append(parts, strategy)
 	}
 	if len(models) > 0 {
 		parts = append(parts, "AI: "+strings.Join(models, "+"))
+	}
+	if reason != "" {
+		parts = append(parts, reason)
+	}
+	if confidence > 0 {
+		parts = append(parts, "confidence "+strconv.Itoa(confidence)+"%")
 	}
 	return strings.Join(parts, " · ")
 }
@@ -40,6 +44,7 @@ type recorderEntry struct {
 	At         time.Time `json:"at"`
 	Kind       string    `json:"kind"`       // "trade" | "goal"
 	Label      string    `json:"label"`      // paper | testnet | live
+	PnLSource  string    `json:"pnl_source"` // paper | testnet | exchange_realized
 	Autonomous bool      `json:"autonomous"` // ran as an ANNY campaign
 	Symbol     string    `json:"symbol"`
 	Side       string    `json:"side,omitempty"`
@@ -86,6 +91,7 @@ func (s *Server) handleRecorder(c fiber.Ctx) error {
 					At:         at,
 					Kind:       "trade",
 					Label:      label,
+					PnLSource:  recorderPnLSource(label),
 					Autonomous: t.CampaignID != "",
 					Symbol:     t.Symbol,
 					Side:       t.Side,
@@ -93,7 +99,7 @@ func (s *Server) handleRecorder(c fiber.Ctx) error {
 					Entry:      t.Entry.String(),
 					Exit:       t.Exit.String(),
 					Action:     string(t.Outcome),
-					Reason:     missionReason(t.Strategy, t.Models),
+					Reason:     missionReason(t.Strategy, t.Models, t.Reason, t.Confidence),
 					PnL:        t.PnLUSDT.String(),
 					Win:        win,
 					Hash: transparency.Hash("trade", t.ID, t.Symbol, t.Side, t.Mode,
@@ -127,14 +133,15 @@ func (s *Server) handleRecorder(c fiber.Ctx) error {
 					win = v > 0
 				}
 				entries = append(entries, recorderEntry{
-					At:     r.CreatedAt,
-					Kind:   "goal",
-					Label:  transparency.LabelPaper,
-					Symbol: r.Symbol,
-					Action: "paper goal",
-					Reason: r.Strategy + " · " + r.Verdict + " · WR " + strconv.FormatFloat(r.WinRatePct, 'f', 0, 64) + "%",
-					PnL:    r.RealizedPnL,
-					Win:    win,
+					At:        r.CreatedAt,
+					Kind:      "goal",
+					Label:     transparency.LabelPaper,
+					PnLSource: "paper",
+					Symbol:    r.Symbol,
+					Action:    "paper goal",
+					Reason:    r.Strategy + " · " + r.Verdict + " · WR " + strconv.FormatFloat(r.WinRatePct, 'f', 0, 64) + "%",
+					PnL:       r.RealizedPnL,
+					Win:       win,
 					Hash: transparency.Hash("goal", r.Symbol, r.Strategy, r.ProfitTarget, r.Capital,
 						r.RealizedPnL, r.Verdict, r.CreatedAt.UTC().Format(time.RFC3339)),
 				})
@@ -173,4 +180,18 @@ func (s *Server) handleRecorder(c fiber.Ctx) error {
 		"anchored":    false,
 		"anchor_note": "On-chain anchoring (opBNB) goes live at launch — the Merkle root is computed and verifiable now.",
 	})
+}
+
+func recorderPnLSource(label string) string {
+	switch label {
+	case transparency.LabelPaper:
+		return "paper"
+	case "testnet":
+		return "testnet"
+	default:
+		if transparency.IsReal(label) {
+			return "exchange_realized"
+		}
+		return label
+	}
 }

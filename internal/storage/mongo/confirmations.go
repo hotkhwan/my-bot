@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"bottrade/internal/decimal"
 	"bottrade/internal/domain"
 	"bottrade/internal/orders"
 
@@ -34,6 +35,17 @@ type executionResultDoc struct {
 	Mode          string `bson:"mode"`
 	ClientOrderID string `bson:"client_order_id"`
 	Message       string `bson:"message"`
+	Quantity      string `bson:"quantity,omitempty"`
+	Symbol        string `bson:"symbol,omitempty"`
+	Side          string `bson:"side,omitempty"`
+	ExitPrice     string `bson:"exit_price,omitempty"`
+	RealizedPnL   string `bson:"realized_pnl,omitempty"`
+}
+
+const terminalConfirmationRetention = 90 * 24 * time.Hour
+
+func terminalConfirmationExpiresAt(now time.Time) time.Time {
+	return now.Add(terminalConfirmationRetention)
 }
 
 func (s *Store) Put(ctx context.Context, confirmation orders.Confirmation) error {
@@ -46,6 +58,22 @@ func (s *Store) Put(ctx context.Context, confirmation orders.Confirmation) error
 		return fmt.Errorf("insert confirmation: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) Get(ctx context.Context, id string) (orders.Confirmation, bool, error) {
+	var doc confirmationDoc
+	err := s.confirmations.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&doc)
+	if errors.Is(err, mongodriver.ErrNoDocuments) {
+		return orders.Confirmation{}, false, nil
+	}
+	if err != nil {
+		return orders.Confirmation{}, false, err
+	}
+	confirmation, err := doc.toConfirmation()
+	if err != nil {
+		return orders.Confirmation{}, false, err
+	}
+	return confirmation, true, nil
 }
 
 func (s *Store) TakeForExecution(ctx context.Context, userID int64, id string, now time.Time) (orders.Confirmation, orders.ExecutionResult, bool, error) {
@@ -79,10 +107,12 @@ func (s *Store) TakeForExecution(ctx context.Context, userID int64, id string, n
 }
 
 func (s *Store) Complete(ctx context.Context, id string, result orders.ExecutionResult) error {
+	now := time.Now().UTC()
 	update := bson.D{{Key: "$set", Value: bson.D{
 		{Key: "status", Value: orders.StatusExecuted},
 		{Key: "result", Value: newExecutionResultDoc(result)},
-		{Key: "updated_at", Value: time.Now()},
+		{Key: "updated_at", Value: now},
+		{Key: "expires_at", Value: terminalConfirmationExpiresAt(now)},
 	}}}
 	matched, err := s.updateConfirmation(ctx, id, orders.StatusExecuting, update)
 	if err != nil {
@@ -95,10 +125,12 @@ func (s *Store) Complete(ctx context.Context, id string, result orders.Execution
 }
 
 func (s *Store) Fail(ctx context.Context, id string, message string) error {
+	now := time.Now().UTC()
 	update := bson.D{{Key: "$set", Value: bson.D{
 		{Key: "status", Value: orders.StatusFailed},
 		{Key: "error_message", Value: message},
-		{Key: "updated_at", Value: time.Now()},
+		{Key: "updated_at", Value: now},
+		{Key: "expires_at", Value: terminalConfirmationExpiresAt(now)},
 	}}}
 	matched, err := s.updateConfirmation(ctx, id, orders.StatusExecuting, update)
 	if err != nil {
@@ -275,6 +307,11 @@ func newExecutionResultDoc(result orders.ExecutionResult) executionResultDoc {
 		Mode:          result.Mode,
 		ClientOrderID: result.ClientOrderID,
 		Message:       result.Message,
+		Quantity:      result.Quantity.String(),
+		Symbol:        result.Symbol,
+		Side:          result.Side,
+		ExitPrice:     result.ExitPrice.String(),
+		RealizedPnL:   result.RealizedPnL.String(),
 	}
 }
 
@@ -286,5 +323,14 @@ func (d confirmationDoc) result() orders.ExecutionResult {
 		Mode:          d.Result.Mode,
 		ClientOrderID: d.Result.ClientOrderID,
 		Message:       d.Result.Message,
+		Quantity:      parseResultDecimal(d.Result.Quantity),
+		Symbol:        d.Result.Symbol,
+		Side:          d.Result.Side,
+		ExitPrice:     parseResultDecimal(d.Result.ExitPrice),
+		RealizedPnL:   parseResultDecimal(d.Result.RealizedPnL),
 	}
+}
+
+func parseResultDecimal(s string) decimal.Decimal {
+	return parseDecimal(s)
 }

@@ -17,20 +17,21 @@ type Config struct {
 }
 
 type Store struct {
-	client        *mongodriver.Client
-	confirmations *mongodriver.Collection
-	orderIntents  *mongodriver.Collection
-	signals       *mongodriver.Collection
-	auditEvents   *mongodriver.Collection
-	users         *mongodriver.Collection
-	journalTrades *mongodriver.Collection
-	credentials   *mongodriver.Collection
-	goalRuns      *mongodriver.Collection
-	armedMissions *mongodriver.Collection
-	access        *mongodriver.Collection
-	aiKeys        *mongodriver.Collection
-	favourites    *mongodriver.Collection
-	interest      *mongodriver.Collection
+	client          *mongodriver.Client
+	confirmations   *mongodriver.Collection
+	orderIntents    *mongodriver.Collection
+	signals         *mongodriver.Collection
+	auditEvents     *mongodriver.Collection
+	users           *mongodriver.Collection
+	journalTrades   *mongodriver.Collection
+	credentials     *mongodriver.Collection
+	goalRuns        *mongodriver.Collection
+	armedMissions   *mongodriver.Collection
+	scheduledCloses *mongodriver.Collection
+	access          *mongodriver.Collection
+	aiKeys          *mongodriver.Collection
+	favourites      *mongodriver.Collection
+	interest        *mongodriver.Collection
 }
 
 // AIKeysCollection exposes the per-user AI-key collection.
@@ -54,6 +55,12 @@ func (s *Store) GoalRunsCollection() *mongodriver.Collection {
 // adapter. This keeps storage free of the API package's record type.
 func (s *Store) ArmedMissionsCollection() *mongodriver.Collection {
 	return s.armedMissions
+}
+
+// ScheduledClosesCollection exposes the scheduled_closes collection for the app
+// adapter. Timed Mission closes are durable jobs, not process-local timers.
+func (s *Store) ScheduledClosesCollection() *mongodriver.Collection {
+	return s.scheduledCloses
 }
 
 // AccessCollection exposes the crew-access approvals collection.
@@ -83,20 +90,21 @@ func Connect(ctx context.Context, cfg Config) (*Store, error) {
 
 	db := client.Database(database)
 	store := &Store{
-		client:        client,
-		confirmations: db.Collection("confirmations"),
-		orderIntents:  db.Collection("order_intents"),
-		signals:       db.Collection("signals"),
-		auditEvents:   db.Collection("audit_events"),
-		users:         db.Collection("users"),
-		journalTrades: db.Collection("journal_trades"),
-		credentials:   db.Collection("binance_credentials"),
-		goalRuns:      db.Collection("goal_runs"),
-		armedMissions: db.Collection("armed_missions"),
-		access:        db.Collection("crew_access"),
-		aiKeys:        db.Collection("ai_keys"),
-		favourites:    db.Collection("favourites"),
-		interest:      db.Collection("interest_signups"),
+		client:          client,
+		confirmations:   db.Collection("confirmations"),
+		orderIntents:    db.Collection("order_intents"),
+		signals:         db.Collection("signals"),
+		auditEvents:     db.Collection("audit_events"),
+		users:           db.Collection("users"),
+		journalTrades:   db.Collection("journal_trades"),
+		credentials:     db.Collection("binance_credentials"),
+		goalRuns:        db.Collection("goal_runs"),
+		armedMissions:   db.Collection("armed_missions"),
+		scheduledCloses: db.Collection("scheduled_closes"),
+		access:          db.Collection("crew_access"),
+		aiKeys:          db.Collection("ai_keys"),
+		favourites:      db.Collection("favourites"),
+		interest:        db.Collection("interest_signups"),
 	}
 	if err := store.ensureIndexes(ctx); err != nil {
 		_ = client.Disconnect(ctx)
@@ -228,6 +236,40 @@ func (s *Store) ensureIndexes(ctx context.Context) error {
 		return fmt.Errorf("create armed mission indexes: %w", err)
 	}
 
+	_, err = s.scheduledCloses.Indexes().CreateMany(ctx, []mongodriver.IndexModel{
+		{
+			Keys: bson.D{
+				{Key: "status", Value: 1},
+				{Key: "due_at", Value: 1},
+			},
+			Options: options.Index().SetName("scheduled_close_status_due_at"),
+		},
+		{
+			Keys: bson.D{
+				{Key: "user_key", Value: 1},
+				{Key: "created_at", Value: -1},
+			},
+			Options: options.Index().SetName("scheduled_close_user_created_at"),
+		},
+		{
+			Keys:    bson.D{{Key: "confirmation_id", Value: 1}},
+			Options: options.Index().SetName("scheduled_close_confirmation_id").SetSparse(true),
+		},
+		{
+			Keys:    bson.D{{Key: "entry_confirmation_id", Value: 1}},
+			Options: options.Index().SetName("scheduled_close_entry_confirmation_id").SetSparse(true),
+		},
+		{
+			Keys: bson.D{{Key: "purge_at", Value: 1}},
+			Options: options.Index().
+				SetName("scheduled_close_purge_at_ttl").
+				SetExpireAfterSeconds(0),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create scheduled close indexes: %w", err)
+	}
+
 	_, err = s.signals.Indexes().CreateMany(ctx, []mongodriver.IndexModel{
 		{
 			Keys: bson.D{
@@ -295,6 +337,17 @@ func (s *Store) ensureIndexes(ctx context.Context) error {
 				{Key: "closed_at", Value: -1},
 			},
 			Options: options.Index().SetName("journal_user_closed_at"),
+		},
+		{
+			Keys: bson.D{
+				{Key: "outcome", Value: 1},
+				{Key: "opened_at", Value: 1},
+			},
+			Options: options.Index().SetName("journal_outcome_opened_at"),
+		},
+		{
+			Keys:    bson.D{{Key: "confirmation_id", Value: 1}},
+			Options: options.Index().SetName("journal_confirmation_id").SetSparse(true),
 		},
 		{
 			Keys:    bson.D{{Key: "campaign_id", Value: 1}},

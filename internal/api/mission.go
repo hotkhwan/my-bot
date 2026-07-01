@@ -10,7 +10,6 @@ import (
 	"bottrade/internal/backtest"
 	"bottrade/internal/campaign"
 	"bottrade/internal/decimal"
-	"bottrade/internal/domain"
 	"bottrade/internal/marketdata"
 	"bottrade/internal/orders"
 	"bottrade/internal/signals"
@@ -36,6 +35,7 @@ const (
 type timedMission struct {
 	UserID   int64
 	Symbol   string
+	Side     string
 	Duration time.Duration
 }
 
@@ -94,11 +94,11 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	if !ok {
 		return c.JSON(fiber.Map{"output": "A live Mission needs a Telegram login (your key is tied to your Telegram account)."})
 	}
-	// A live Mission places a real order on the user's active key. Require one to
-	// be set up and active first, and point them to Settings to do it.
+	// A live Mission places an order on the user's active testnet key. Require one
+	// to be set up and active first, and point them to Settings to do it.
 	if s.credentials != nil && !s.hasActiveKey(c) {
 		return c.JSON(fiber.Map{
-			"output":   "🔑 No active Binance key yet. Open Settings → add a key profile (testnet, Futures on, Withdrawals off) → tap “Make active”, then run the Mission.",
+			"output":   "🔑 No active testnet Binance key yet. Open Settings → add a testnet key profile (Futures on, Withdrawals off) → tap “Make active”, then run the Mission.",
 			"need_key": true,
 		})
 	}
@@ -177,6 +177,7 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	decision := signals.Decision{
 		Action:     signals.ActionOpen,
 		Symbol:     symbol,
+		Strategy:   missionStrategyID(strategyName),
 		Side:       side,
 		Leverage:   leverage,
 		Entry:      trimPrice(entry),
@@ -191,16 +192,36 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	if err != nil {
 		return c.JSON(fiber.Map{"output": "⚠️ Could not build the mission: " + err.Error()})
 	}
+	if intent.Open != nil {
+		intent.Open.CampaignID = "mission"
+	}
 	confirmation, err := s.orders.Prepare(c.Context(), userID, intent)
 	if err != nil {
 		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 	}
-	s.timedMissions.Store(confirmation.ID, timedMission{
-		UserID: userID, Symbol: symbol, Duration: planDuration(durationKey),
-	})
+	// Persist a durable awaiting-entry close when the runtime gate allows live
+	// testnet missions. Gate-off dry-run prepares intentionally have no close row,
+	// so their response copy must not promise a timed close.
+	timedClose, err := s.scheduleTimedMissionClose(timedMission{
+		UserID: userID, Symbol: symbol, Side: side, Duration: planDuration(durationKey),
+	}, confirmation.ID)
+	if err != nil {
+		s.logger.Warn("could not persist awaiting timed close; cancelling confirmation", "error", err)
+		_ = s.orders.Cancel(c.Context(), userID, confirmation.ID)
+		return c.JSON(fiber.Map{"output": "⚠️ Could not prepare this Mission's timed close — nothing was staged. Please try again."})
+	}
+	timedCloseAttached := timedClose.ID != ""
+	output := "Review this live Mission (testnet) - Confirm authorizes the entry"
+	if timedCloseAttached {
+		output += " and a timed close at the end of the plan if TP/SL has not closed it first"
+	}
+	output += ":\n\n" + orders.Summary(intent) + "\n\nA protective stop and take-profit are attached to this testnet entry."
+	if timedCloseAttached {
+		output = strings.TrimSuffix(output, ".") + ", with a timed close attached."
+	}
 	s.usage.Incr(claimsOf(c).Subject, "mission") // count the attempt toward the daily limit
 	return c.JSON(fiber.Map{
-		"output":     "🚀 Review this live Mission (testnet) — Confirm authorizes the entry and a timed close at the end of the plan if TP/SL has not closed it first:\n\n" + orders.Summary(intent) + "\n\n🤖 ANNY manages the protective stop while the plan is active.",
+		"output":     output,
 		"confirm_id": confirmation.ID,
 		"mission": fiber.Map{
 			"symbol": symbol, "side": side, "entry": trimPrice(entry),
@@ -228,6 +249,13 @@ func (s *Server) annyBasicLiveDecision(ctx context.Context, symbol string, execu
 	return annybasic.Evaluate(obs, annybasic.State{RealizedPnLUSDT: decimal.Zero()}, missionMaxLeverage), nil
 }
 
+func missionStrategyID(strategy string) string {
+	if strategy == annybasic.ID {
+		return annybasic.ID + "_v" + annybasic.Version
+	}
+	return strings.TrimSpace(strategy)
+}
+
 func minPositive(a, b int) int {
 	switch {
 	case a <= 0:
@@ -241,64 +269,9 @@ func minPositive(a, b int) int {
 	}
 }
 
-func (s *Server) scheduleTimedMissionClose(m timedMission) {
-	if !s.cfg.App.CampaignLiveEnabled || !s.cfg.Binance.Testnet ||
-		s.cfg.App.RealTradingEnabled || s.cfg.App.DryRun || m.Duration <= 0 {
-		return
-	}
-	go func() {
-		timer := time.NewTimer(m.Duration)
-		defer timer.Stop()
-		<-timer.C
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		positions, err := s.orders.Positions(ctx, m.UserID)
-		if err != nil {
-			s.logger.Warn("timed mission: load positions failed", "symbol", m.Symbol, "error", err)
-			return
-		}
-		open := false
-		for _, p := range positions {
-			if strings.EqualFold(p.Symbol, m.Symbol) && !p.Amount.IsZero() {
-				open = true
-				break
-			}
-		}
-		if !open {
-			return
-		}
-		intent := domain.Intent{Type: domain.IntentClose, Close: &domain.CloseIntent{
-			Symbol: m.Symbol, All: true, ResolvedPercent: decimal.NewFromInt(100),
-		}}
-		confirmation, err := s.orders.Prepare(ctx, m.UserID, intent)
-		if err != nil {
-			s.logger.Warn("timed mission: prepare close failed", "symbol", m.Symbol, "error", err)
-			return
-		}
-		if _, err := s.orders.Confirm(ctx, m.UserID, confirmation.ID); err != nil {
-			s.logger.Warn("timed mission: confirm close failed", "symbol", m.Symbol, "error", err)
-			return
-		}
-		s.logger.Info("timed mission closed at plan deadline", "user_id", m.UserID, "symbol", m.Symbol)
-	}()
-}
-
-// hasActiveKey reports whether the user has a Binance key profile marked active.
+// hasActiveKey reports whether the user has an active testnet Binance key.
 func (s *Server) hasActiveKey(c fiber.Ctx) bool {
-	if s.credentials == nil {
-		return false
-	}
-	profiles, err := s.credentials.Profiles(c.Context(), claimsOf(c).Subject)
-	if err != nil {
-		return false
-	}
-	for _, p := range profiles {
-		if p.Active {
-			return true
-		}
-	}
-	return false
+	return s.hasActiveKeyForSubject(c.Context(), claimsOf(c).Subject)
 }
 
 func missionBracket(side string, entry float64) (sl, tp float64) {

@@ -48,6 +48,8 @@ type Trade struct {
 	Side           string          `bson:"side" json:"side"`
 	Strategy       string          `bson:"strategy,omitempty" json:"strategy,omitempty"`
 	Models         []string        `bson:"models,omitempty" json:"models,omitempty"`
+	Reason         string          `bson:"reason,omitempty" json:"reason,omitempty"`
+	Confidence     int             `bson:"confidence,omitempty" json:"confidence,omitempty"`
 	Leverage       int             `bson:"leverage" json:"leverage"`
 	Mode           string          `bson:"mode" json:"mode"`
 	Entry          decimal.Decimal `bson:"entry" json:"entry"`
@@ -71,6 +73,7 @@ type Filter struct {
 	Strategy   string
 	Mode       string
 	ClosedOnly bool
+	OpenOnly   bool
 }
 
 func (f Filter) matches(t Trade) bool {
@@ -92,13 +95,26 @@ func (f Filter) matches(t Trade) bool {
 	if f.ClosedOnly && !t.Outcome.closed() {
 		return false
 	}
+	if f.OpenOnly && t.Outcome != OutcomeOpen {
+		return false
+	}
 	return true
 }
 
-// Repository persists journaled trades. Save upserts by Trade.ID so a trade can
-// be recorded when opened and updated when it closes.
+// CloseUpdate is the final result for a previously-open journal trade.
+type CloseUpdate struct {
+	Exit     decimal.Decimal
+	PnLUSDT  decimal.Decimal
+	Outcome  Outcome
+	ClosedAt time.Time
+	Mode     string
+}
+
+// Repository persists journaled trades. Save inserts open rows idempotently and
+// never revives a row that has already been closed; Close owns final updates.
 type Repository interface {
 	Save(ctx context.Context, trade Trade) error
+	Close(ctx context.Context, id string, update CloseUpdate) (Trade, bool, error)
 	List(ctx context.Context, filter Filter) ([]Trade, error)
 }
 
@@ -133,6 +149,24 @@ func (s *Service) Record(ctx context.Context, trade Trade) error {
 		return errors.New("journal: invalid outcome")
 	}
 	return s.repo.Save(ctx, trade)
+}
+
+// Close atomically flips one open trade to its final result. ok=false means the
+// row was already closed or did not exist, which lets reconcilers be single-winner.
+func (s *Service) Close(ctx context.Context, id string, update CloseUpdate) (Trade, bool, error) {
+	if strings.TrimSpace(id) == "" {
+		return Trade{}, false, errors.New("journal: trade id is required")
+	}
+	if update.Outcome == "" {
+		update.Outcome = OutcomeBreakeven
+	}
+	if !update.Outcome.closed() {
+		return Trade{}, false, errors.New("journal: close outcome must be final")
+	}
+	if update.ClosedAt.IsZero() {
+		update.ClosedAt = time.Now().UTC()
+	}
+	return s.repo.Close(ctx, id, update)
 }
 
 // List returns the trades matching filter, for the Flight Recorder feed.

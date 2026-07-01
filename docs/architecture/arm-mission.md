@@ -1,9 +1,9 @@
-# Arm Mission — wait-for-setup live entry — PROPOSAL (pending review)
+# Arm Mission — wait-for-setup live entry — GO-WITH-CONDITIONS (testnet pre-launch)
 
-> Status: **PROPOSAL**, not Source of Truth. Owner: Codex (live execution).
-> This is a **live-trading** feature — it must pass the **Security Gate** and
-> **Legal Gate** before any merge, and ship **testnet-only** behind the existing
-> campaign-live gating. Codex should not implement until §5 is signed off.
+> Status: **GO-WITH-CONDITIONS** for testnet pre-launch engineering. Owner:
+> Codex (live execution). External legal sign-off is still required before any
+> prod / real-key promotion. Ship **testnet-only** behind the existing
+> campaign-live gating.
 
 ## 0. Problem
 
@@ -34,8 +34,13 @@ auto-enters once, feeding the Live monitor.
 ## 2. Reuse what already exists
 
 - `annyBasicLiveDecision` — the live setup check (unchanged).
-- `orders.Prepare` — idempotent confirmation + TTL; the armed entry MUST go through
-  it so a restart/double-trigger can't double-enter.
+- `orders.Prepare` + `orders.Confirm` — staging + atomic execution. **CORRECTION
+  (security review):** `orders.Prepare` is **NOT idempotent** — it mints a fresh
+  random id every call (`internal/orders/service.go`), so it can NOT be the
+  single-entry guard. The single-entry guard is the **atomic `MarkTriggered`
+  status transition** (`status=armed && expires_at>now`, conditional
+  FindOneAndUpdate); only the caller that wins the claim may Prepare+Confirm. See
+  §5.A.
 - `scheduleTimedMissionClose` — the auto-close at plan end (already gated).
 - The autonomous campaign (memory `autonomous-campaign-gating`, testnet-only) is the
   closest existing "watch & enter" machinery — the watcher should follow its model,
@@ -53,11 +58,15 @@ ArmedMission {
   id, userKey/userID, symbol, strategy, side?(nil until trigger),
   capitalUSDT, leverageUsePct, durationWindow,
   armedAt, expiresAt, status: armed|triggered|expired|disarmed,
-  idempotencyKey, triggeredConfirmationID?, createdAt
-}  // TTL index on expiresAt
+  idempotencyKey, triggeredConfirmationID?, purgeAt?, createdAt
+}
 ```
 
 On boot, rehydrate `status=armed && now<expiresAt` and resume their watchers.
+`expiresAt` is the entry window. TTL must use `purgeAt`, not `expiresAt`:
+armed/expired/disarmed records set `purgeAt = expiresAt + retention` (currently
+90d), while triggered records leave `purgeAt` unset so testnet-entry audit is
+kept.
 
 ## 4. Safety model — arming = bounded pre-authorization
 
@@ -76,30 +85,66 @@ cfg.App.CampaignLiveEnabled && cfg.Binance.Testnet &&
 !cfg.App.RealTradingEnabled && !cfg.App.DryRun
 ```
 
-Plus, before any armed entry:
+### 5.A Security Gate — verdict: GO-WITH-CONDITIONS (3 HIGH are HARD merge blockers)
 
-1. **Testnet-only.** Never arm/enter when `RealTradingEnabled` — real trading
-   cannot be enabled accidentally. If config flips mid-window, the watcher aborts.
-2. **Active Binance key** (testnet, Futures on, Withdrawals off) at trigger time.
-3. **Authorization + subscription/daily limits** re-checked at trigger, not just at
-   arm (`s.allow(..., "mission")`).
-4. **Idempotency + single entry** via `orders.Prepare`; a restart re-arms the
-   watcher but cannot double-enter.
-5. **Restart safety** (Mongo persistence + rehydrate, §3).
-6. **Disarm / expire** always available; expiry places no order.
+Phase A scaffolding is a sound base. Phase B's auto-entry MUST add these guards
+(reviewed 2026; hook sites in code):
 
-### Legal Gate (`docs/legal/thai-sec-design-principles.md`)
+**HIGH (hard blockers):**
 
-| # | Question | Arm Mission risk |
-|---|----------|------------------|
-| 1 | Guaranteed/implied profit? | Copy must say "waits for a setup", never "auto-profit". |
-| 2 | Soliciting investment with returns? | Low (testnet, user-armed, no funds solicited). |
-| 3 | Copy-trading invite? | Low — it's the user's own armed plan, not following another. |
-| 4 | Custody of funds? | None — testnet, user's own key. |
-| 5 | Leads with profit/win-rate? | Lead with "armed / waiting / testnet", risk-first. |
+1. **Single-entry = claim-first via `MarkTriggered`, NOT `orders.Prepare`.**
+   `orders.Prepare` mints a fresh random id per call → never collides → two ticks =
+   two live entries. Reorder `checkArmedMission`: (a) `MarkTriggered(...)` atomic
+   claim → abort if `!changed`; (b) only the winner calls `orders.Prepare` +
+   `orders.Confirm`; (c) write the real `confirmation.ID` back onto the record
+   (new store method / second transition — today the hook passes `""`).
+   **Write order: MarkTriggered (persisted) → Prepare → Confirm**, so a crash never
+   re-enters on rehydrate. Also thread `mission.IdempotencyKey` ("armed:"+id) into
+   the confirmation so the unique index is a real backstop.
+2. **Testnet-scoped key check.** `hasActiveKeyForSubject` must require
+   `Active && Testnet` (`ProfileInfo.Testnet` exists); **reject, do not fall back**
+   if the executor lookup fails or yields a non-testnet executor — else a mainnet
+   active key routes real money under a testnet global config.
+3. **Re-check the quad AND testnet-key immediately before `orders.Confirm`**, inside
+   the claimed critical section (the candles+decision round-trip can take seconds and
+   config can flip). Abort if either is now false.
 
-➡️ Provisional: testnet-only arming is likely Gate-passable, but the **auto-entry**
-framing needs legal confirmation. Mark **BLOCKED until Security + Legal sign-off**.
+**MEDIUM:**
+
+4. Rebuild the full order-safety envelope at entry: `missionLeverageFor` +
+   `DecisionToIntent(_, missionMaxLeverage)`, `missionBracket`, `missionSize`
+   (cap `missionMaxSizeUSDT`); schedule `scheduleTimedMissionClose` after Confirm.
+5. Move/clarify `usage.Incr("mission")` — increment at trigger (winning claim), not
+   only at arm; keep the `s.allow(...)` re-check at trigger.
+6. Disarm/expire vs in-flight trigger: `MarkTriggered.changed==true` is the point of
+   no return; `handleDisarmMission` must report "already triggered" for a non-armed
+   row; a rehydrate must reconcile "triggered but no confirmation id" rather than
+   re-enter.
+
+**Restart safety:** rehydrate re-watches only `status=armed`; combined with write
+order (1) this prevents double-enter — the single most important Phase B rule.
+
+### 5.B Legal Gate — verdict: GO-WITH-CONDITIONS (testnet-only, pre-launch)
+
+5 questions all **No** (non-custodial, user's own key, testnet, risk-first), EXCEPT
+Q4 framing: unattended auto-entry (no per-trade human Confirm) needs explicit
+disclosure. Copy fixes required (land WITH Phase B, not before):
+
+1. **Arm copy** (`armed_mission.go:317`) — remove "Phase A records the setup only;
+   no order is placed" (false under Phase B). Replace with explicit consent: one
+   testnet entry on the user's own key, side chosen by ANNY Basic, capped
+   size/leverage, auto-closed, **no setup guaranteed**, not financial advice.
+2. **Retire "ANNY manages the protective stop"** (`mission.go:203`) → mechanical
+   wording ("a protective stop + timed close are attached to this testnet entry").
+3. **UI armed copy** (`index.html` `setArmedState`, ~1349/1530) — disclose that
+   arming auto-places one testnet entry and the window can expire with no order.
+4. Surface expired-no-order and losing auto-entries in the Flight Recorder (no
+   hidden missions).
+
+➡️ **External legal sign-off required before any real-key/prod promotion.** Testnet
+pre-launch engineering may proceed once 5.A (HIGH 1-3) + 5.B copy are done; the
+campaign-live testnet quad stays the outer fence. **Do not promote to prod/real-key
+without human legal sign-off.**
 
 ## 6. UX (minimal — Zoom-like, no new settings)
 

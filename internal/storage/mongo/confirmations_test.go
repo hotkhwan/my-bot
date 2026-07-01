@@ -63,6 +63,18 @@ func TestConfirmationDocRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTerminalConfirmationExpiryExtendsPastShortConfirmationTTL(t *testing.T) {
+	now := time.Unix(1710000000, 0).UTC()
+	got := terminalConfirmationExpiresAt(now)
+
+	if !got.Equal(now.Add(terminalConfirmationRetention)) {
+		t.Fatalf("terminal expiry = %s, want now + retention", got)
+	}
+	if !got.After(now.Add(24 * time.Hour)) {
+		t.Fatalf("terminal expiry = %s, want enough retention for restart reconciliation", got)
+	}
+}
+
 func TestOrderIntentDocRoundTrip(t *testing.T) {
 	createdAt := time.Unix(1710000000, 0).UTC()
 	record := orders.IntentRecord{
