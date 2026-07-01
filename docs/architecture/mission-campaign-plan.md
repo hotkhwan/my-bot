@@ -102,7 +102,27 @@ F1–F4.
 4. **Late-window entry cutoff**: no new entries in the final 10% of the window (default; tunable in Phase 1).
 5. **Target reached**: ✅ **flush the open position immediately** (lock the win) — the runner cancels the pending timed close and closes now.
 
-## Progress
-- ✅ **Phase 0 done** (2026-07-01): stateful `missionCampaignAdvisor` (`internal/api/mission_campaign_advisor.go`) + tests
-  (`mission_campaign_advisor_test.go`). The model's target / 2-loss / 15-cap stops now fire from accumulated State
-  (previously dead code). Pure, no network, no orders. Next: Phase 1 (required-user idempotency placer + windowed runner).
+## Progress (2026-07-01) — all phases landed on develop
+- ✅ **Phase 0**: stateful `missionCampaignAdvisor` — model target / 2-loss / 15-cap stops fire from accumulated State
+  (previously dead code). `mission_campaign_advisor.go` (+ tests).
+- ✅ **Phase 1**: `missionCampaignPlacer` (required-user + per-trade idempotency `mission:<id>:trade:<n>` + durable
+  per-trade close, gate re-asserted every entry), `recordingTrader` (State feedback), `missionCampaignRunner`
+  (window deadline + late-window cutoff + paced signals). `mission_campaign_placer.go`, `mission_campaign_runner.go` (+ tests).
+- ✅ **Phase 2**: durable `CampaignMissionStore` (mem + `mongoCampaignMissions` + `campaign_missions` collection/indexes);
+  progress fields rehydrate State on restart. `campaign_mission.go`, `internal/app/campaign_mission_store.go` (+ tests).
+- ✅ **Phase 3**: runtime assembly + boot rehydrate + `ExpireStale` (`campaign_mission_runtime.go`), endpoints
+  `POST /api/mission/campaign/arm|disarm`, `GET /api/mission/campaign` (`campaign_mission_handlers.go`), dashboard
+  multi-trade toggle + status/disarm + tier-cadence poll.
+- ✅ **Phase 4**: Legal Gate reviewed the N-auto-entry consent copy — **PASS-WITH-EDITS** (testnet). Applied: reframed
+  the profit target as a *stop condition* (not "toward target"), softened "authorizes the whole series" →
+  "pre-authorizes this bounded, capped series", dropped "LIVE" from testnet copy, added substantial-risk + loss
+  disclosure to all three long strings. **NEEDS-EXTERNAL-LEGAL-SIGNOFF before any real-trading enablement** — a single
+  confirmation pre-authorizing a bounded series toward a profit target is the standing-authorization + profit-goal shape
+  a regulator would scrutinize as managed-investment-like (same gate as [[arm-mission-feature]] real-trading block). Do
+  not use these strings in front-page marketing without external review. Docs + memory updated.
+
+### Known follow-ups (not blockers)
+- The synchronous LiveTrader opens+awaits-close per trade, so at most one position is open at a time and it is always
+  closed before re-evaluation — the "flush open position on target" decision is therefore a no-op in practice.
+- `RealtimeResolver` subscribes after the order is placed (documented small race); a user-data WebSocket removes it.
+- Per-tier caps (armed/campaign 3/user, quotas) remain hardcoded — see `subscription-gated-limits`.

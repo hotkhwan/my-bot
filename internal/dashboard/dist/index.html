@@ -507,7 +507,7 @@
         <div class="card" id="live-card">
           <div class="flow-step"><span class="flow-no">3</span><strong>Launch &amp; confirm</strong></div>
           <p id="g-step3-sub" style="margin:0.3rem 0">Review the proposed testnet order. Nothing is placed until you confirm.</p>
-          <label id="g-multitrade-row" style="display:flex;align-items:center;gap:0.4rem;margin:0.3rem 0 0.5rem;font-size:0.9rem;cursor:pointer"><input type="checkbox" id="g-multitrade"/> Multi-trade mission<span class="ibadge" data-info="One confirmation authorizes a bounded series of automatic testnet re-entries toward your target. ANNY opens and closes capped ANNY Basic trades until the target, two consecutive losses, the 15-trade cap, or the plan window ends — whichever comes first. Testnet only. You can disarm any time. Not financial advice.">ⓘ</span></label>
+          <label id="g-multitrade-row" style="display:flex;align-items:center;gap:0.4rem;margin:0.3rem 0 0.5rem;font-size:0.9rem;cursor:pointer"><input type="checkbox" id="g-multitrade"/> Multi-trade mission<span class="ibadge" data-info="One confirmation pre-authorizes a bounded, capped series of automatic testnet re-entries. ANNY opens and closes ANNY Basic trades until whichever comes first: your profit target, two consecutive losses, the 15-trade cap, or the plan window ends. Entries can result in losses; every trade is recorded. Testnet only. You can disarm any time. Trading digital assets involves substantial risk. Not financial advice.">ⓘ</span></label>
           <pre id="g-confirm-out" class="output hidden"></pre>
           <div id="g-armed-status" class="hidden" style="margin:0.4rem 0;font:600 0.85rem var(--font-mono)"></div>
           <div id="g-campaign-status" class="hidden" style="margin:0.4rem 0;font:600 0.85rem var(--font-mono)"></div>
@@ -1630,7 +1630,7 @@
         }
         const body = Object.assign({}, lastGoalRequest);
         if ($("g-multitrade") && $("g-multitrade").checked) {
-          if (!confirm("Start a LIVE multi-trade testnet Mission? One confirmation authorizes a bounded SERIES of automatic capped entries toward your target — ANNY opens and closes trades until the target, two consecutive losses, the 15-trade cap, or the plan window ends. Testnet only. Disarm any time. Not financial advice.")) return;
+          if (!confirm("Start a multi-trade testnet Mission? One confirmation pre-authorizes a bounded, capped SERIES of automatic testnet entries. ANNY opens and closes trades until whichever comes first: your profit target, two consecutive losses, the 15-trade cap, or the plan window ends. Entries may lose. Testnet only. Disarm any time. Trading involves substantial risk. Not financial advice.")) return;
           goalMsg("Starting multi-trade mission…", true);
           $("g-live").disabled = true;
           try {

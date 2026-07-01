@@ -121,7 +121,7 @@ func (s *Server) handleArmCampaignMission(c fiber.Ctx) error {
 	if runtimeCtx := s.runtimeContext(); runtimeCtx != nil {
 		s.startCampaignMissionRunner(runtimeCtx, mission)
 	}
-	output := fmt.Sprintf("Running — a multi-trade ANNY Basic mission on %s (testnet). ANNY will auto-open and close capped entries toward %s USDT, stopping on the target, two consecutive losses, %d trades, or when the plan window ends at %s. Each entry uses your active testnet key with protective exits and a timed close. This one confirmation authorizes the whole series. Not financial advice.",
+	output := fmt.Sprintf("Running — a multi-trade ANNY Basic mission on %s (testnet). ANNY will auto-open and close capped entries using your active testnet key, with protective exits and a timed close on each. The series stops at whichever comes first: a %s USDT profit target, two consecutive losses, %d trades, or the plan window end at %s. Entries may result in losses. This one confirmation pre-authorizes this bounded, capped series; you can disarm any time. Trading digital assets involves substantial risk. Not financial advice.",
 		symbol, mission.TargetProfitUSDT, mission.MaxTrades, expiresAt.Format(time.RFC3339))
 	return c.JSON(fiber.Map{"output": output, "campaign": mission})
 }
