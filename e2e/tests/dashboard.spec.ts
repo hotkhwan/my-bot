@@ -62,7 +62,7 @@ test("ANNY Basic no-setup asks for plan edit, not a zero paper result", async ({
   await expect(page.locator("#g-card-title")).toContainText("Edit plan");
   await expect(page.locator("#bc-mode")).toContainText("EDIT PLAN");
   await expect(page.locator("#bc-pnl")).toContainText("Needs edit");
-  await expect(page.locator("#bc-roi")).toContainText("No paper result");
+  await expect(page.locator("#bc-roi")).toContainText("No paper evidence");
   await expect(card).toContainText("Market data");
   await expect(card).toContainText("OK");
   await expect(card).toContainText("Entries needed");
@@ -186,20 +186,43 @@ test("target-reached run is launch ready with RR/edge transparency and relabeled
   // Stub uptrend reaches the target with positive edge over >= 2 trades.
   await expect(card).toContainText("Target reached");
   const stats = page.locator("#bc-stats");
-  // New transparency cells: structural reward:risk and the per-trade edge.
+  // New transparency cells: structural reward:risk and the per-trade paper average.
   await expect(stats).toContainText("RR");
   await expect(stats).toContainText("1 : 2");
-  await expect(stats).toContainText("Edge / trade");
+  await expect(stats).toContainText("Paper avg / trade");
   await expect(stats).toContainText("USDT");
   // Reaching the target IS the success signal — a sparse but target-hitting plan
-  // is launch ready (no longer blocked by the 5-trade non-target sample rule).
-  await expect(stats).toContainText("Launch ready");
-  await expect(stats).toContainText("Yes");
+  // is rule-eligible (no longer blocked by the 5-trade non-target sample rule).
+  await expect(stats).toContainText("Rule eligibility");
+  await expect(stats).toContainText("Eligible");
   // Relabeled action: the edit button now reads "Update plan".
   await expect(page.locator("#g-edit")).toHaveText("Update plan");
   // Next carries the new label (gated behind a Binance key in this harness — the
   // correct real-trading guard).
   await expect(page.locator("#g-live")).toHaveText("Next →");
+});
+
+test("editing the plan after assessment blocks Launch until re-assessed", async ({ page }) => {
+  await registerAndLogin(page);
+  await gotoTrade(page);
+
+  // Assess a launchable plan (stub uptrend → target reached).
+  await page.fill("#g-profit", "5");
+  await page.fill("#g-capital", "100");
+  await page.fill("#g-risk", "30");
+  await page.selectOption("#g-symbol", "BTC");
+  await page.selectOption("#g-strategy", "ema");
+  await page.selectOption("#g-duration", "unlimited");
+  await page.click("#g-run");
+  await expect(page.locator("#g-card")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("#g-card")).toContainText("Target reached");
+
+  // Change the plan AFTER assessing, then try to Launch: the guard must block so
+  // the paper evidence and the live mission can never drift apart. The block
+  // happens before any confirm dialog, so no dialog handling is needed.
+  await page.fill("#g-profit", "20");
+  await page.click("#g-live");
+  await expect(page.locator("#g-msg")).toContainText("changed after the paper assessment");
 });
 
 test("logout bounces back to the landing page and resets the URL", async ({ page }) => {
