@@ -1,0 +1,67 @@
+# Fly.io config for the PROD app (app.joinanny.com).
+# Separate Fly app + separate secrets from the testnet app (aliza-trading /
+# testnet.joinanny.com) so a testnet deploy can never flip prod's flags or keys.
+# Deploy with:  fly deploy -c fly.prod.toml
+#
+# IMPORTANT: this is still TESTNET-SAFE. Real-money trading stays OFF
+# (BINANCE_TESTNET=true, REAL_TRADING_ENABLED=false) until a deliberate go-live
+# that has passed the Legal Gate + opBNB milestone. Do not flip those here casually.
+app = "joinanny"
+primary_region = "sin" # Singapore: close to Binance + Thailand
+
+[build]
+
+# Non-secret config. Safety flags pinned here so a misconfigured deploy cannot
+# silently enable real trading. Secrets (TELEGRAM_BOT_TOKEN for @joinanny_bot,
+# MONGODB_URI, CREDENTIAL_ENCRYPTION_KEY, WEBAPP_URL=https://app.joinanny.com, …)
+# live in `fly secrets set -a joinanny`, never in this file.
+[env]
+  APP_ENV = "production"
+  TELEGRAM_MODE = "polling"
+  # DRY_RUN=false places REAL orders — but only on TESTNET while BINANCE_TESTNET=true
+  # and REAL_TRADING_ENABLED=false (the executor refuses live-account orders).
+  DRY_RUN = "false"
+  BINANCE_TESTNET = "true"
+  BINANCE_FUTURES_BASE_URL = "https://demo-fapi.binance.com"
+  REAL_TRADING_ENABLED = "false"
+  CAMPAIGN_LIVE_ENABLED = "true"
+  LOG_LEVEL = "info"
+  # Prod uses its OWN database, separate from testnet's "tradebot", so the two
+  # environments never share missions/orders/credentials even on one Atlas cluster.
+  MONGODB_DATABASE = "annyprod"
+  HTTP_ADDR = ":8080"
+
+[processes]
+  worker = "/bin/worker"
+  api = "/bin/api"
+
+# Inbound HTTP belongs to the api process only. auto_stop is off so the bot
+# never sleeps (a sleeping instance stops watching positions/alerts).
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  processes = ["api"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+# worker: single always-on machine. Telegram getUpdates allows only one poller
+# per bot token, so do NOT scale this past 1 instance. Uses @joinanny_bot's token
+# (distinct from the testnet worker's @annyliz_bot token → no getUpdates conflict).
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  processes = ["worker"]
+
+# api: HTTP server, free to scale horizontally later.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  processes = ["api"]
