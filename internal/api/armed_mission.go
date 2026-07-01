@@ -571,22 +571,26 @@ func (s *Server) triggerArmedMission(ctx context.Context, mission ArmedMission, 
 		_ = s.orders.Cancel(ctx, mission.UserID, confirmation.ID)
 		return updated, true, fmt.Errorf("armed mission gate closed before confirm")
 	}
-	scheduledClose, err := s.scheduleTimedMissionClose(timedMission{
+	// Persist the plan-end close as AWAITING-ENTRY (poller-invisible) before confirm;
+	// it is armed only after the entry actually executes, so a crash before confirm
+	// can never close an unrelated position.
+	if _, err := s.scheduleTimedMissionClose(timedMission{
 		UserID: mission.UserID, Symbol: mission.Symbol, Duration: planDuration(mission.Duration),
-	})
-	if err != nil {
+	}, confirmation.ID); err != nil {
 		_ = s.orders.Cancel(ctx, mission.UserID, confirmation.ID)
 		return updated, true, err
 	}
 	if !s.armedMissionRuntimeAllowed() || !s.armedMissionTriggerAllowed(ctx, updated) {
 		_ = s.orders.Cancel(ctx, mission.UserID, confirmation.ID)
-		s.cancelScheduledClose(ctx, scheduledClose, "armed mission gate closed before entry confirm")
+		s.cancelAwaitingScheduledClose(ctx, confirmation.ID, "armed mission gate closed before entry confirm")
 		return updated, true, fmt.Errorf("armed mission gate closed before confirm")
 	}
 	if _, err := s.orders.ConfirmWithRequiredUserExecutor(ctx, mission.UserID, confirmation.ID); err != nil {
-		s.cancelScheduledClose(ctx, scheduledClose, "entry confirm failed: "+err.Error())
+		s.cancelAwaitingScheduledClose(ctx, confirmation.ID, "entry confirm failed: "+err.Error())
 		return updated, true, err
 	}
+	// Entry executed → arm the plan-end close.
+	s.activateScheduledClose(ctx, confirmation.ID)
 	s.logger.Info("armed mission testnet entry confirmed",
 		"id", mission.ID, "confirmation_id", confirmation.ID, "user", mission.UserKey, "symbol", mission.Symbol, "side", side, "reason", decision.Reason)
 	return updated, true, nil

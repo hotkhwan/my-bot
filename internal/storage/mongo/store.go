@@ -256,6 +256,10 @@ func (s *Store) ensureIndexes(ctx context.Context) error {
 			Options: options.Index().SetName("scheduled_close_confirmation_id").SetSparse(true),
 		},
 		{
+			Keys:    bson.D{{Key: "entry_confirmation_id", Value: 1}},
+			Options: options.Index().SetName("scheduled_close_entry_confirmation_id").SetSparse(true),
+		},
+		{
 			Keys: bson.D{{Key: "purge_at", Value: 1}},
 			Options: options.Index().
 				SetName("scheduled_close_purge_at_ttl").

@@ -107,11 +107,59 @@ func (m *mongoScheduledCloses) markTerminal(ctx context.Context, id string, stat
 	}}})
 }
 
+func (m *mongoScheduledCloses) ActivateByEntryConfirmation(ctx context.Context, entryConfirmationID string, now time.Time) (api.ScheduledClose, bool, error) {
+	// Pipeline update so due_at = now + window_seconds is computed from the row's own
+	// field atomically (the entry may confirm minutes after prepare).
+	return m.transition(ctx, bson.D{
+		{Key: "entry_confirmation_id", Value: entryConfirmationID},
+		{Key: "status", Value: api.ScheduledCloseStatusAwaitingEntry},
+	}, mongodriver.Pipeline{
+		{{Key: "$set", Value: bson.D{
+			{Key: "status", Value: api.ScheduledCloseStatusPending},
+			{Key: "updated_at", Value: now},
+			{Key: "due_at", Value: bson.D{{Key: "$add", Value: bson.A{
+				now, bson.D{{Key: "$multiply", Value: bson.A{"$window_seconds", int64(1000)}}},
+			}}}},
+		}}},
+	})
+}
+
+func (m *mongoScheduledCloses) CancelByEntryConfirmation(ctx context.Context, entryConfirmationID, reason string, now time.Time) (api.ScheduledClose, bool, error) {
+	return m.transition(ctx, bson.D{
+		{Key: "entry_confirmation_id", Value: entryConfirmationID},
+		{Key: "status", Value: bson.D{{Key: "$in", Value: bson.A{
+			api.ScheduledCloseStatusAwaitingEntry,
+			api.ScheduledCloseStatusPending,
+		}}}},
+	}, bson.D{{Key: "$set", Value: bson.D{
+		{Key: "status", Value: api.ScheduledCloseStatusCancelled},
+		{Key: "reason", Value: reason},
+		{Key: "updated_at", Value: now},
+		{Key: "purge_at", Value: terminalScheduledClosePurgeAt(now)},
+	}}})
+}
+
+func (m *mongoScheduledCloses) CancelStaleAwaiting(ctx context.Context, createdBefore, now time.Time) (int, error) {
+	res, err := m.coll.UpdateMany(ctx, bson.D{
+		{Key: "status", Value: api.ScheduledCloseStatusAwaitingEntry},
+		{Key: "created_at", Value: bson.D{{Key: "$lt", Value: createdBefore}}},
+	}, bson.D{{Key: "$set", Value: bson.D{
+		{Key: "status", Value: api.ScheduledCloseStatusCancelled},
+		{Key: "reason", Value: "entry never confirmed"},
+		{Key: "updated_at", Value: now},
+		{Key: "purge_at", Value: terminalScheduledClosePurgeAt(now)},
+	}}})
+	if err != nil {
+		return 0, err
+	}
+	return int(res.ModifiedCount), nil
+}
+
 func terminalScheduledClosePurgeAt(now time.Time) time.Time {
 	return now.Add(90 * 24 * time.Hour)
 }
 
-func (m *mongoScheduledCloses) transition(ctx context.Context, filter bson.D, update bson.D) (api.ScheduledClose, bool, error) {
+func (m *mongoScheduledCloses) transition(ctx context.Context, filter bson.D, update any) (api.ScheduledClose, bool, error) {
 	var close api.ScheduledClose
 	err := m.coll.FindOneAndUpdate(ctx, filter, update, options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&close)
 	if errors.Is(err, mongodriver.ErrNoDocuments) {

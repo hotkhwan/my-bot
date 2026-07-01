@@ -17,14 +17,24 @@ import (
 type ScheduledCloseStatus string
 
 const (
-	ScheduledCloseStatusPending   ScheduledCloseStatus = "pending"
-	ScheduledCloseStatusExecuting ScheduledCloseStatus = "executing"
-	ScheduledCloseStatusDone      ScheduledCloseStatus = "done"
-	ScheduledCloseStatusCancelled ScheduledCloseStatus = "cancelled"
-	ScheduledCloseStatusSkipped   ScheduledCloseStatus = "skipped"
+	// AwaitingEntry means the close is persisted but NOT yet active: the entry it
+	// protects has not been confirmed. The poller ignores it, so a crash before the
+	// entry confirms can never close an unrelated open position of the same symbol.
+	ScheduledCloseStatusAwaitingEntry ScheduledCloseStatus = "awaiting_entry"
+	ScheduledCloseStatusPending       ScheduledCloseStatus = "pending"
+	ScheduledCloseStatusExecuting     ScheduledCloseStatus = "executing"
+	ScheduledCloseStatusDone          ScheduledCloseStatus = "done"
+	ScheduledCloseStatusCancelled     ScheduledCloseStatus = "cancelled"
+	ScheduledCloseStatusSkipped       ScheduledCloseStatus = "skipped"
 )
 
 const scheduledClosePollInterval = 30 * time.Second
+
+// scheduledCloseAwaitingTTL cancels an awaiting-entry close whose entry was never
+// confirmed within this window (e.g. the user never clicked Confirm, or a crash
+// left it stranded before activation). Comfortably longer than the order
+// confirmation TTL so a slow-but-real confirmation still activates.
+const scheduledCloseAwaitingTTL = 30 * time.Minute
 
 // ScheduledCloseClaimTimeout lets another API instance recover a close job if
 // the process dies after claiming it but before writing a terminal status.
@@ -34,17 +44,19 @@ const ScheduledCloseClaimTimeout = 5 * time.Minute
 // protective plumbing: the poller closes an open position after the plan window
 // survives API restarts.
 type ScheduledClose struct {
-	ID             string               `json:"id" bson:"_id"`
-	UserKey        string               `json:"-" bson:"user_key"`
-	UserID         int64                `json:"-" bson:"user_id"`
-	Symbol         string               `json:"symbol" bson:"symbol"`
-	DueAt          time.Time            `json:"due_at" bson:"due_at"`
-	Status         ScheduledCloseStatus `json:"status" bson:"status"`
-	ConfirmationID string               `json:"confirmation_id,omitempty" bson:"confirmation_id,omitempty"`
-	Reason         string               `json:"reason,omitempty" bson:"reason,omitempty"`
-	CreatedAt      time.Time            `json:"created_at" bson:"created_at"`
-	UpdatedAt      time.Time            `json:"updated_at" bson:"updated_at"`
-	PurgeAt        *time.Time           `json:"purge_at,omitempty" bson:"purge_at,omitempty"`
+	ID                  string               `json:"id" bson:"_id"`
+	UserKey             string               `json:"-" bson:"user_key"`
+	UserID              int64                `json:"-" bson:"user_id"`
+	Symbol              string               `json:"symbol" bson:"symbol"`
+	DueAt               time.Time            `json:"due_at" bson:"due_at"`
+	WindowSeconds       int64                `json:"window_seconds" bson:"window_seconds"`
+	EntryConfirmationID string               `json:"entry_confirmation_id,omitempty" bson:"entry_confirmation_id,omitempty"`
+	Status              ScheduledCloseStatus `json:"status" bson:"status"`
+	ConfirmationID      string               `json:"confirmation_id,omitempty" bson:"confirmation_id,omitempty"`
+	Reason              string               `json:"reason,omitempty" bson:"reason,omitempty"`
+	CreatedAt           time.Time            `json:"created_at" bson:"created_at"`
+	UpdatedAt           time.Time            `json:"updated_at" bson:"updated_at"`
+	PurgeAt             *time.Time           `json:"purge_at,omitempty" bson:"purge_at,omitempty"`
 }
 
 type ScheduledCloseStore interface {
@@ -54,6 +66,17 @@ type ScheduledCloseStore interface {
 	MarkDone(ctx context.Context, id, confirmationID, reason string, now time.Time) (ScheduledClose, bool, error)
 	MarkSkipped(ctx context.Context, id, confirmationID, reason string, now time.Time) (ScheduledClose, bool, error)
 	MarkCancelled(ctx context.Context, id, reason string, now time.Time) (ScheduledClose, bool, error)
+	// ActivateByEntryConfirmation flips an awaiting-entry close to pending (arming
+	// the poller) once its entry has actually confirmed, setting DueAt = now +
+	// window. Keyed by the entry confirmation id so the confirm path can recover it
+	// from Mongo after a restart — it does not depend on any in-memory metadata.
+	ActivateByEntryConfirmation(ctx context.Context, entryConfirmationID string, now time.Time) (ScheduledClose, bool, error)
+	// CancelByEntryConfirmation cancels an awaiting-entry/pending close when its
+	// entry was cancelled or failed.
+	CancelByEntryConfirmation(ctx context.Context, entryConfirmationID, reason string, now time.Time) (ScheduledClose, bool, error)
+	// CancelStaleAwaiting cancels awaiting-entry closes created before the cutoff
+	// (their entry never confirmed). Returns how many were swept.
+	CancelStaleAwaiting(ctx context.Context, createdBefore, now time.Time) (int, error)
 }
 
 type memScheduledCloses struct {
@@ -149,6 +172,57 @@ func (m *memScheduledCloses) markTerminal(id string, status ScheduledCloseStatus
 	return row, true, nil
 }
 
+func (m *memScheduledCloses) ActivateByEntryConfirmation(_ context.Context, entryConfirmationID string, now time.Time) (ScheduledClose, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, row := range m.rows {
+		if row.EntryConfirmationID == entryConfirmationID && row.Status == ScheduledCloseStatusAwaitingEntry {
+			row.Status = ScheduledCloseStatusPending
+			row.DueAt = now.Add(time.Duration(row.WindowSeconds) * time.Second)
+			row.UpdatedAt = now
+			m.rows[id] = row
+			return row, true, nil
+		}
+	}
+	return ScheduledClose{}, false, nil
+}
+
+func (m *memScheduledCloses) CancelByEntryConfirmation(_ context.Context, entryConfirmationID, reason string, now time.Time) (ScheduledClose, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, row := range m.rows {
+		if row.EntryConfirmationID != entryConfirmationID {
+			continue
+		}
+		if row.Status == ScheduledCloseStatusAwaitingEntry || row.Status == ScheduledCloseStatusPending {
+			row.Status = ScheduledCloseStatusCancelled
+			row.Reason = strings.TrimSpace(reason)
+			row.UpdatedAt = now
+			row.PurgeAt = scheduledClosePurgeAt(now)
+			m.rows[id] = row
+			return row, true, nil
+		}
+	}
+	return ScheduledClose{}, false, nil
+}
+
+func (m *memScheduledCloses) CancelStaleAwaiting(_ context.Context, createdBefore, now time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, row := range m.rows {
+		if row.Status == ScheduledCloseStatusAwaitingEntry && row.CreatedAt.Before(createdBefore) {
+			row.Status = ScheduledCloseStatusCancelled
+			row.Reason = "entry never confirmed"
+			row.UpdatedAt = now
+			row.PurgeAt = scheduledClosePurgeAt(now)
+			m.rows[id] = row
+			n++
+		}
+	}
+	return n, nil
+}
+
 func sortScheduledCloses(rows []ScheduledClose) {
 	for i := 1; i < len(rows); i++ {
 		for j := i; j > 0 && rows[j].DueAt.Before(rows[j-1].DueAt); j-- {
@@ -173,8 +247,13 @@ func scheduledClosePurgeAt(now time.Time) *time.Time {
 	return &purgeAt
 }
 
-func (s *Server) scheduleTimedMissionClose(m timedMission) (ScheduledClose, error) {
-	if !s.armedMissionRuntimeAllowed() || m.Duration <= 0 {
+// scheduleTimedMissionClose persists an AWAITING-ENTRY close at prepare time, keyed
+// by the entry confirmation id. It becomes active (poller-visible) only after the
+// entry actually confirms (activateScheduledClose). Persisting at prepare — instead
+// of an in-memory map — is what lets a confirm after an API restart still recover
+// and arm the close.
+func (s *Server) scheduleTimedMissionClose(m timedMission, entryConfirmationID string) (ScheduledClose, error) {
+	if !s.armedMissionRuntimeAllowed() || m.Duration <= 0 || strings.TrimSpace(entryConfirmationID) == "" {
 		return ScheduledClose{}, nil
 	}
 	if s.scheduledCloses == nil {
@@ -186,29 +265,48 @@ func (s *Server) scheduleTimedMissionClose(m timedMission) (ScheduledClose, erro
 		return ScheduledClose{}, err
 	}
 	close := ScheduledClose{
-		ID:        id,
-		UserKey:   orders.TraderKey(m.UserID),
-		UserID:    m.UserID,
-		Symbol:    normalizeSymbol(m.Symbol),
-		DueAt:     now.Add(m.Duration),
-		Status:    ScheduledCloseStatusPending,
-		Reason:    "mission timed close",
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:                  id,
+		UserKey:             orders.TraderKey(m.UserID),
+		UserID:              m.UserID,
+		Symbol:              normalizeSymbol(m.Symbol),
+		WindowSeconds:       int64(m.Duration / time.Second),
+		EntryConfirmationID: entryConfirmationID,
+		Status:              ScheduledCloseStatusAwaitingEntry,
+		Reason:              "mission timed close",
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	if err := s.scheduledCloses.Save(context.Background(), close); err != nil {
 		return ScheduledClose{}, err
 	}
-	s.logger.Info("scheduled durable mission close", "id", close.ID, "user_id", close.UserID, "symbol", close.Symbol, "due_at", close.DueAt)
+	s.logger.Info("scheduled durable mission close (awaiting entry)", "id", close.ID, "user_id", close.UserID, "symbol", close.Symbol, "entry_confirmation_id", entryConfirmationID)
 	return close, nil
 }
 
-func (s *Server) cancelScheduledClose(ctx context.Context, close ScheduledClose, reason string) {
-	if close.ID == "" || s.scheduledCloses == nil {
+// activateScheduledClose arms the poller for the close protecting a just-confirmed
+// entry. Safe no-op if there is no awaiting close (e.g. gate off at schedule time).
+func (s *Server) activateScheduledClose(ctx context.Context, entryConfirmationID string) {
+	if s.scheduledCloses == nil || strings.TrimSpace(entryConfirmationID) == "" {
 		return
 	}
-	if _, _, err := s.scheduledCloses.MarkCancelled(ctx, close.ID, reason, time.Now().UTC()); err != nil {
-		s.logger.Warn("scheduled close cancel failed", "id", close.ID, "error", err)
+	updated, ok, err := s.scheduledCloses.ActivateByEntryConfirmation(ctx, entryConfirmationID, time.Now().UTC())
+	if err != nil {
+		s.logger.Warn("scheduled close activate failed", "entry_confirmation_id", entryConfirmationID, "error", err)
+		return
+	}
+	if ok {
+		s.logger.Info("scheduled close activated", "id", updated.ID, "symbol", updated.Symbol, "due_at", updated.DueAt)
+	}
+}
+
+// cancelAwaitingScheduledClose drops the awaiting close for an entry that was
+// cancelled or failed, so the poller never fires it.
+func (s *Server) cancelAwaitingScheduledClose(ctx context.Context, entryConfirmationID, reason string) {
+	if s.scheduledCloses == nil || strings.TrimSpace(entryConfirmationID) == "" {
+		return
+	}
+	if _, _, err := s.scheduledCloses.CancelByEntryConfirmation(ctx, entryConfirmationID, reason, time.Now().UTC()); err != nil {
+		s.logger.Warn("scheduled close cancel failed", "entry_confirmation_id", entryConfirmationID, "error", err)
 	}
 }
 
@@ -241,6 +339,13 @@ func (s *Server) startScheduledClosePoller(ctx context.Context) {
 func (s *Server) runDueScheduledCloses(ctx context.Context, now time.Time) (int, error) {
 	if s.scheduledCloses == nil {
 		return 0, nil
+	}
+	// Sweep awaiting-entry closes whose entry never confirmed (abandoned review or a
+	// crash before activation) so they don't linger forever.
+	if swept, err := s.scheduledCloses.CancelStaleAwaiting(ctx, now.Add(-scheduledCloseAwaitingTTL), now); err != nil {
+		s.logger.Warn("scheduled close stale-awaiting sweep failed", "error", err)
+	} else if swept > 0 {
+		s.logger.Info("scheduled closes cancelled (entry never confirmed)", "count", swept)
 	}
 	rows, err := s.scheduledCloses.ListDue(ctx, now, 100)
 	if err != nil {

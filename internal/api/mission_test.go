@@ -613,22 +613,56 @@ func TestArmedMissionCancelsScheduledCloseWhenEntryConfirmFails(t *testing.T) {
 	}
 }
 
-func TestScheduleTimedMissionClosePersistsJob(t *testing.T) {
+func TestScheduleTimedMissionClosePersistsAwaitingThenActivates(t *testing.T) {
 	store := newMemScheduledCloses()
 	server := NewServer(testConfigWith(t, missionArmRuntimeEnv("")), nil, testLogger(), WithScheduledCloseStore(store))
-	start := time.Now().UTC()
-	close, err := server.scheduleTimedMissionClose(timedMission{UserID: 7, Symbol: "BTC", Duration: 15 * time.Minute})
+	// At prepare the close is persisted AWAITING-ENTRY (poller-invisible), keyed by
+	// the entry confirmation id, with no due_at yet.
+	close, err := server.scheduleTimedMissionClose(timedMission{UserID: 7, Symbol: "BTC", Duration: 15 * time.Minute}, "conf-123")
 	if err != nil {
 		t.Fatalf("schedule timed close: %v", err)
 	}
-	if close.ID == "" || close.Status != ScheduledCloseStatusPending || close.UserKey != "tg:7" || close.Symbol != "BTCUSDT" {
-		t.Fatalf("scheduled close = %+v, want pending tg:7 BTCUSDT", close)
+	if close.Status != ScheduledCloseStatusAwaitingEntry || close.EntryConfirmationID != "conf-123" ||
+		close.WindowSeconds != 900 || !close.DueAt.IsZero() {
+		t.Fatalf("scheduled close = %+v, want awaiting_entry/conf-123/900s/no-due", close)
 	}
-	if close.DueAt.Before(start.Add(15*time.Minute)) || close.DueAt.After(time.Now().UTC().Add(16*time.Minute)) {
-		t.Fatalf("due_at = %s, want about 15m from now", close.DueAt)
+	// The poller must NOT treat an awaiting-entry row as due — even long after it was
+	// created — because the entry it protects has not confirmed (crash-before-entry
+	// safety guard). Poll at "now" so the stale-awaiting sweep (30m) doesn't apply.
+	if handled, err := server.runDueScheduledCloses(context.Background(), time.Now().UTC()); err != nil || handled != 0 {
+		t.Fatalf("awaiting close handled=%d err=%v, want untouched", handled, err)
 	}
-	if _, ok := store.rows[close.ID]; !ok {
-		t.Fatalf("scheduled close %q was not persisted", close.ID)
+	if store.rows[close.ID].Status != ScheduledCloseStatusAwaitingEntry {
+		t.Fatalf("awaiting close was activated/closed by the poller: %+v", store.rows[close.ID])
+	}
+	// After the entry confirms, activation arms the poller with due_at = now + window.
+	before := time.Now().UTC()
+	server.activateScheduledClose(context.Background(), "conf-123")
+	got := store.rows[close.ID]
+	if got.Status != ScheduledCloseStatusPending || got.DueAt.Before(before.Add(15*time.Minute)) {
+		t.Fatalf("activated close = %+v, want pending with due_at ~= now+15m", got)
+	}
+}
+
+func TestScheduledCloseCancelStaleAwaiting(t *testing.T) {
+	store := newMemScheduledCloses()
+	now := time.Now().UTC()
+	// Old awaiting row (entry never confirmed) + a fresh one.
+	_ = store.Save(context.Background(), ScheduledClose{ID: "old", UserID: 7, Symbol: "BTCUSDT",
+		EntryConfirmationID: "c-old", Status: ScheduledCloseStatusAwaitingEntry, WindowSeconds: 900,
+		CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)})
+	_ = store.Save(context.Background(), ScheduledClose{ID: "fresh", UserID: 7, Symbol: "BTCUSDT",
+		EntryConfirmationID: "c-fresh", Status: ScheduledCloseStatusAwaitingEntry, WindowSeconds: 900,
+		CreatedAt: now, UpdatedAt: now})
+	server := NewServer(testConfigWith(t, missionArmRuntimeEnv("")), nil, testLogger(), WithScheduledCloseStore(store))
+	if _, err := server.runDueScheduledCloses(context.Background(), now); err != nil {
+		t.Fatalf("run due: %v", err)
+	}
+	if store.rows["old"].Status != ScheduledCloseStatusCancelled {
+		t.Fatalf("stale awaiting = %+v, want cancelled", store.rows["old"])
+	}
+	if store.rows["fresh"].Status != ScheduledCloseStatusAwaitingEntry {
+		t.Fatalf("fresh awaiting = %+v, want still awaiting", store.rows["fresh"])
 	}
 }
 

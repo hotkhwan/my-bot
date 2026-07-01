@@ -106,25 +106,21 @@ func (s *Server) handleConfirm(c fiber.Ctx) error {
 	}
 
 	if body.Cancel {
-		s.timedMissions.Delete(body.ID)
+		s.cancelAwaitingScheduledClose(c.Context(), body.ID, "mission cancelled")
 		if err := s.orders.Cancel(c.Context(), userID, body.ID); err != nil {
 			return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 		}
 		return c.JSON(fiber.Map{"output": "Cancelled."})
 	}
 
-	var scheduledClose ScheduledClose
-	if value, ok := s.timedMissions.LoadAndDelete(body.ID); ok {
-		var err error
-		if scheduledClose, err = s.scheduleTimedMissionClose(value.(timedMission)); err != nil {
-			return c.JSON(fiber.Map{"output": "⚠️ Could not schedule the timed close: " + err.Error()})
-		}
-	}
 	result, err := s.orders.Confirm(c.Context(), userID, body.ID)
 	if err != nil {
-		s.cancelScheduledClose(c.Context(), scheduledClose, "entry confirm failed: "+err.Error())
+		// Entry did not execute → make sure no close ever fires for it.
+		s.cancelAwaitingScheduledClose(c.Context(), body.ID, "entry confirm failed: "+err.Error())
 		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 	}
+	// Entry executed → arm the durable plan-end close (safe no-op if none awaits).
+	s.activateScheduledClose(c.Context(), body.ID)
 	out := result.Message
 	if strings.TrimSpace(out) == "" {
 		out = "✅ " + result.Mode + " " + result.ClientOrderID

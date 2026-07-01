@@ -22,9 +22,11 @@ Persistent collaboration rules for ANNY:
   plan on 1-minute candles; longer plans select 1m, 5m, 15m, or 1h execution
   candles automatically.
 - A confirmed dev/testnet mission authorizes a timed close at plan expiry if
-  TP/SL has not already closed it. The current scheduler is process-local and
-  must move to a Mongo-backed restart-safe job before production private-model
-  execution.
+  TP/SL has not already closed it. The close is a **durable, Mongo-backed job**
+  (`scheduled_closes` + a 30s poller, `internal/api/scheduled_close.go`), so it
+  survives API restarts. It is persisted as `awaiting_entry` at prepare (keyed by
+  the entry confirmation id) and only armed (`pending`) after the entry actually
+  confirms — so a crash before the entry can never close an unrelated position.
 - Public visitors do not self-register from the dashboard. They can submit an
   interest email, stored durably in MongoDB `interest_signups`.
 - Early access flow is Interest → admin sends invite → account registration →

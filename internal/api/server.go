@@ -78,7 +78,6 @@ type Server struct {
 	keyring          *auth.Keyring
 	usage            *memUsage
 	annyBasicDecider annyBasicDecisionFunc
-	timedMissions    sync.Map // confirmation id -> timedMission metadata until user confirms
 	armedWatchers    sync.Map // armed mission id -> struct{}; testnet wait-for-setup watchers
 	runtimeCtx       context.Context
 	logger           *slog.Logger
