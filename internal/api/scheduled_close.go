@@ -74,9 +74,9 @@ type ScheduledCloseStore interface {
 	// CancelByEntryConfirmation cancels an awaiting-entry/pending close when its
 	// entry was cancelled or failed.
 	CancelByEntryConfirmation(ctx context.Context, entryConfirmationID, reason string, now time.Time) (ScheduledClose, bool, error)
-	// CancelStaleAwaiting cancels awaiting-entry closes created before the cutoff
-	// (their entry never confirmed). Returns how many were swept.
-	CancelStaleAwaiting(ctx context.Context, createdBefore, now time.Time) (int, error)
+	// ListAwaitingEntry returns awaiting-entry closes for the reconciler to resolve
+	// against their entry confirmation's durable status.
+	ListAwaitingEntry(ctx context.Context, limit int) ([]ScheduledClose, error)
 }
 
 type memScheduledCloses struct {
@@ -206,21 +206,23 @@ func (m *memScheduledCloses) CancelByEntryConfirmation(_ context.Context, entryC
 	return ScheduledClose{}, false, nil
 }
 
-func (m *memScheduledCloses) CancelStaleAwaiting(_ context.Context, createdBefore, now time.Time) (int, error) {
+func (m *memScheduledCloses) ListAwaitingEntry(_ context.Context, limit int) ([]ScheduledClose, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for id, row := range m.rows {
-		if row.Status == ScheduledCloseStatusAwaitingEntry && row.CreatedAt.Before(createdBefore) {
-			row.Status = ScheduledCloseStatusCancelled
-			row.Reason = "entry never confirmed"
-			row.UpdatedAt = now
-			row.PurgeAt = scheduledClosePurgeAt(now)
-			m.rows[id] = row
-			n++
+	if limit <= 0 {
+		limit = 100
+	}
+	out := make([]ScheduledClose, 0)
+	for _, row := range m.rows {
+		if row.Status == ScheduledCloseStatusAwaitingEntry {
+			out = append(out, row)
 		}
 	}
-	return n, nil
+	sortScheduledCloses(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func sortScheduledCloses(rows []ScheduledClose) {
@@ -310,6 +312,43 @@ func (s *Server) cancelAwaitingScheduledClose(ctx context.Context, entryConfirma
 	}
 }
 
+// reconcileAwaitingCloses resolves each awaiting-entry close against its entry
+// confirmation's durable status: executed → activate (recovers a close whose
+// activation was lost to a crash), failed/cancelled/expired → cancel, and
+// pending/executing/unknown → leave until past the awaiting TTL, then cancel. This
+// makes recovery status-driven rather than a blind time-based cancel, so a
+// genuinely-executed entry never loses its close.
+func (s *Server) reconcileAwaitingCloses(ctx context.Context, now time.Time) {
+	if s.scheduledCloses == nil || s.orders == nil {
+		return
+	}
+	rows, err := s.scheduledCloses.ListAwaitingEntry(ctx, 200)
+	if err != nil {
+		s.logger.Warn("scheduled close reconcile list failed", "error", err)
+		return
+	}
+	staleBefore := now.Add(-scheduledCloseAwaitingTTL)
+	for _, row := range rows {
+		status, ok, err := s.orders.ConfirmationStatus(ctx, row.EntryConfirmationID)
+		if err != nil {
+			s.logger.Warn("scheduled close reconcile status failed", "id", row.ID, "error", err)
+			continue
+		}
+		switch {
+		case ok && status == orders.StatusExecuted:
+			s.activateScheduledClose(ctx, row.EntryConfirmationID)
+		case ok && (status == orders.StatusFailed || status == orders.StatusCancelled || status == orders.StatusExpired):
+			s.cancelAwaitingScheduledClose(ctx, row.EntryConfirmationID, "entry "+string(status))
+		default:
+			// pending / executing (entry still in flight) or unknown/purged — cancel
+			// only once the awaiting TTL has clearly passed.
+			if row.CreatedAt.Before(staleBefore) {
+				s.cancelAwaitingScheduledClose(ctx, row.EntryConfirmationID, "entry never confirmed")
+			}
+		}
+	}
+}
+
 func (s *Server) startScheduledClosePoller(ctx context.Context) {
 	if s.scheduledCloses == nil {
 		return
@@ -340,13 +379,9 @@ func (s *Server) runDueScheduledCloses(ctx context.Context, now time.Time) (int,
 	if s.scheduledCloses == nil {
 		return 0, nil
 	}
-	// Sweep awaiting-entry closes whose entry never confirmed (abandoned review or a
-	// crash before activation) so they don't linger forever.
-	if swept, err := s.scheduledCloses.CancelStaleAwaiting(ctx, now.Add(-scheduledCloseAwaitingTTL), now); err != nil {
-		s.logger.Warn("scheduled close stale-awaiting sweep failed", "error", err)
-	} else if swept > 0 {
-		s.logger.Info("scheduled closes cancelled (entry never confirmed)", "count", swept)
-	}
+	// Reconcile awaiting-entry closes against their entry's durable status, so a
+	// crash between confirm-success and activation is RECOVERED (not silently lost).
+	s.reconcileAwaitingCloses(ctx, now)
 	rows, err := s.scheduledCloses.ListDue(ctx, now, 100)
 	if err != nil {
 		return 0, err

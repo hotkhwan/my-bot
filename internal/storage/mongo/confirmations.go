@@ -48,6 +48,22 @@ func (s *Store) Put(ctx context.Context, confirmation orders.Confirmation) error
 	return nil
 }
 
+func (s *Store) Get(ctx context.Context, id string) (orders.Confirmation, bool, error) {
+	var doc confirmationDoc
+	err := s.confirmations.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&doc)
+	if errors.Is(err, mongodriver.ErrNoDocuments) {
+		return orders.Confirmation{}, false, nil
+	}
+	if err != nil {
+		return orders.Confirmation{}, false, err
+	}
+	confirmation, err := doc.toConfirmation()
+	if err != nil {
+		return orders.Confirmation{}, false, err
+	}
+	return confirmation, true, nil
+}
+
 func (s *Store) TakeForExecution(ctx context.Context, userID int64, id string, now time.Time) (orders.Confirmation, orders.ExecutionResult, bool, error) {
 	filter := bson.D{
 		{Key: "_id", Value: id},

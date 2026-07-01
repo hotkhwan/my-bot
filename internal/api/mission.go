@@ -196,11 +196,15 @@ func (s *Server) handleMissionPrepare(c fiber.Ctx) error {
 	}
 	// Persist a durable awaiting-entry close now (keyed by the confirmation id). It
 	// stays poller-invisible until the entry actually confirms, and survives an API
-	// restart — so a confirm after a restart still arms the plan-end close.
+	// restart — so a confirm after a restart still arms the plan-end close. If it
+	// can't be persisted, cancel the confirmation rather than let the user confirm an
+	// entry with no timed close while the copy promises one.
 	if _, err := s.scheduleTimedMissionClose(timedMission{
 		UserID: userID, Symbol: symbol, Duration: planDuration(durationKey),
 	}, confirmation.ID); err != nil {
-		s.logger.Warn("could not persist awaiting timed close", "error", err)
+		s.logger.Warn("could not persist awaiting timed close; cancelling confirmation", "error", err)
+		_ = s.orders.Cancel(c.Context(), userID, confirmation.ID)
+		return c.JSON(fiber.Map{"output": "⚠️ Could not prepare this Mission's timed close — nothing was staged. Please try again."})
 	}
 	s.usage.Incr(claimsOf(c).Subject, "mission") // count the attempt toward the daily limit
 	return c.JSON(fiber.Map{

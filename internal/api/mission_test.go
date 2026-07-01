@@ -644,25 +644,102 @@ func TestScheduleTimedMissionClosePersistsAwaitingThenActivates(t *testing.T) {
 	}
 }
 
-func TestScheduledCloseCancelStaleAwaiting(t *testing.T) {
+func TestScheduledCloseReconcileFromConfirmationStatus(t *testing.T) {
 	store := newMemScheduledCloses()
 	now := time.Now().UTC()
-	// Old awaiting row (entry never confirmed) + a fresh one.
-	_ = store.Save(context.Background(), ScheduledClose{ID: "old", UserID: 7, Symbol: "BTCUSDT",
-		EntryConfirmationID: "c-old", Status: ScheduledCloseStatusAwaitingEntry, WindowSeconds: 900,
-		CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)})
-	_ = store.Save(context.Background(), ScheduledClose{ID: "fresh", UserID: 7, Symbol: "BTCUSDT",
-		EntryConfirmationID: "c-fresh", Status: ScheduledCloseStatusAwaitingEntry, WindowSeconds: 900,
-		CreatedAt: now, UpdatedAt: now})
-	server := NewServer(testConfigWith(t, missionArmRuntimeEnv("")), nil, testLogger(), WithScheduledCloseStore(store))
-	if _, err := server.runDueScheduledCloses(context.Background(), now); err != nil {
-		t.Fatalf("run due: %v", err)
+	exec := &missionTestExecutor{}
+	server := NewServer(testConfigWith(t, missionArmRuntimeEnv("")), nil, testLogger(),
+		WithOrders(missionOrderService(exec)), WithScheduledCloseStore(store),
+		WithCredentials(testCredentialService(t, "tg:7", true)))
+	intent := func() domain.Intent {
+		return domain.Intent{Type: domain.IntentClose, Close: &domain.CloseIntent{
+			Symbol: "BTCUSDT", All: true, ResolvedPercent: decimal.NewFromInt(100),
+		}}
 	}
-	if store.rows["old"].Status != ScheduledCloseStatusCancelled {
-		t.Fatalf("stale awaiting = %+v, want cancelled", store.rows["old"])
+	awaiting := func(id, entryConf string, created time.Time) {
+		_ = store.Save(context.Background(), ScheduledClose{ID: id, UserID: 7, Symbol: "BTCUSDT",
+			EntryConfirmationID: entryConf, Status: ScheduledCloseStatusAwaitingEntry, WindowSeconds: 900,
+			CreatedAt: created, UpdatedAt: created})
 	}
-	if store.rows["fresh"].Status != ScheduledCloseStatusAwaitingEntry {
-		t.Fatalf("fresh awaiting = %+v, want still awaiting", store.rows["fresh"])
+
+	// executed entry → reconciler must ACTIVATE its close (recovers a crash between
+	// confirm-success and activation).
+	execConf, err := server.orders.Prepare(context.Background(), 7, intent())
+	if err != nil {
+		t.Fatalf("prepare exec: %v", err)
+	}
+	if _, err := server.orders.ConfirmWithRequiredUserExecutor(context.Background(), 7, execConf.ID); err != nil {
+		t.Fatalf("confirm exec: %v", err)
+	}
+	awaiting("c-exec", execConf.ID, now)
+
+	// cancelled entry → reconciler must CANCEL its close.
+	cancelledConf, _ := server.orders.Prepare(context.Background(), 7, intent())
+	_ = server.orders.Cancel(context.Background(), 7, cancelledConf.ID)
+	awaiting("c-cancelled", cancelledConf.ID, now)
+
+	// unknown confirmation, old → cancel; unknown, fresh → leave.
+	awaiting("c-unknown-old", "missing-old", now.Add(-time.Hour))
+	awaiting("c-unknown-fresh", "missing-fresh", now)
+
+	server.reconcileAwaitingCloses(context.Background(), now)
+
+	if got := store.rows["c-exec"].Status; got != ScheduledCloseStatusPending {
+		t.Fatalf("executed-entry close = %q, want activated pending", got)
+	}
+	if got := store.rows["c-cancelled"].Status; got != ScheduledCloseStatusCancelled {
+		t.Fatalf("cancelled-entry close = %q, want cancelled", got)
+	}
+	if got := store.rows["c-unknown-old"].Status; got != ScheduledCloseStatusCancelled {
+		t.Fatalf("unknown-old close = %q, want cancelled", got)
+	}
+	if got := store.rows["c-unknown-fresh"].Status; got != ScheduledCloseStatusAwaitingEntry {
+		t.Fatalf("unknown-fresh close = %q, want still awaiting", got)
+	}
+}
+
+// A duplicate/concurrent Confirm must not drop the timed close of an entry that
+// actually executes: the second Confirm errors, but the awaiting close (already
+// activated by the first) must stay pending.
+func TestMissionDuplicateConfirmKeepsScheduledClose(t *testing.T) {
+	stub := stubKlines(t)
+	closeStore := newMemScheduledCloses()
+	tk, _ := auth.NewTokenizer(bytes.Repeat([]byte("k"), auth.MinSecretSize), 0)
+	token, _ := tk.Issue("tg:468848033", "u", "user")
+	server := NewServer(testConfigWith(t, missionArmRuntimeEnv(stub.URL)), nil, testLogger(),
+		WithTokenizer(tk), WithOrders(missionOrderService(&missionTestExecutor{})),
+		WithCredentials(testCredentialService(t, "tg:468848033", true)), WithScheduledCloseStore(closeStore))
+
+	post := func(path string, body any) map[string]any {
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, _ := server.App().Test(req)
+		defer resp.Body.Close()
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+
+	out := post("/api/mission/prepare", map[string]any{
+		"symbol": "BTC", "capital": 100, "strategy": "ema", "duration": "15m", "leverage_use_pct": 50,
+	})
+	cid, _ := out["confirm_id"].(string)
+	if cid == "" {
+		t.Fatalf("prepare = %v, want confirm_id", out)
+	}
+	// First confirm executes the entry and activates the close.
+	post("/api/confirm", map[string]any{"id": cid})
+	// Second (duplicate) confirm errors — but must NOT cancel the close.
+	post("/api/confirm", map[string]any{"id": cid})
+
+	var close ScheduledClose
+	for _, row := range closeStore.rows {
+		close = row
+	}
+	if close.Status != ScheduledCloseStatusPending {
+		t.Fatalf("scheduled close after duplicate confirm = %+v, want pending (not cancelled)", close)
 	}
 }
 

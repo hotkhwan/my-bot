@@ -82,6 +82,7 @@ type TradeJournal interface {
 
 type ConfirmationStore interface {
 	Put(ctx context.Context, confirmation Confirmation) error
+	Get(ctx context.Context, id string) (Confirmation, bool, error)
 	TakeForExecution(ctx context.Context, userID int64, id string, now time.Time) (Confirmation, ExecutionResult, bool, error)
 	Complete(ctx context.Context, id string, result ExecutionResult) error
 	Fail(ctx context.Context, id string, message string) error
@@ -296,6 +297,17 @@ func (s *Service) prepare(ctx context.Context, userID int64, intent domain.Inten
 	s.logger.Info("confirmation created", "confirmation_id", shortID(id), "user_id", userID, "intent_type", intent.Type)
 
 	return confirmation, nil
+}
+
+// ConfirmationStatus reports a confirmation's durable status, so callers can
+// reconcile dependent work (e.g. a scheduled close) against whether the entry
+// actually executed. Returns ok=false when the confirmation is unknown/purged.
+func (s *Service) ConfirmationStatus(ctx context.Context, id string) (ConfirmationStatus, bool, error) {
+	confirmation, ok, err := s.store.Get(ctx, id)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	return confirmation.Status, true, nil
 }
 
 func (s *Service) Confirm(ctx context.Context, userID int64, id string) (ExecutionResult, error) {
@@ -515,6 +527,16 @@ func (s *MemoryStore) Put(ctx context.Context, confirmation Confirmation) error 
 	}
 	s.items[confirmation.ID] = &confirmationRecord{confirmation: confirmation}
 	return nil
+}
+
+func (s *MemoryStore) Get(_ context.Context, id string) (Confirmation, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.items[id]
+	if !ok {
+		return Confirmation{}, false, nil
+	}
+	return record.confirmation, true, nil
 }
 
 func (s *MemoryStore) TakeForExecution(ctx context.Context, userID int64, id string, now time.Time) (Confirmation, ExecutionResult, bool, error) {

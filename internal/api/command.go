@@ -115,8 +115,11 @@ func (s *Server) handleConfirm(c fiber.Ctx) error {
 
 	result, err := s.orders.Confirm(c.Context(), userID, body.ID)
 	if err != nil {
-		// Entry did not execute → make sure no close ever fires for it.
-		s.cancelAwaitingScheduledClose(c.Context(), body.ID, "entry confirm failed: "+err.Error())
+		// Do NOT cancel the awaiting close here: a duplicate/concurrent confirm can
+		// hit "already executing" while the first call is still placing the entry.
+		// Cancelling now would drop the close for an entry that then succeeds. The
+		// reconciler resolves the awaiting close from the confirmation's durable
+		// status (executed → activate, failed/cancelled/expired → cancel).
 		return c.JSON(fiber.Map{"output": "⚠️ " + err.Error()})
 	}
 	// Entry executed → arm the durable plan-end close (safe no-op if none awaits).

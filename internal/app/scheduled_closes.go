@@ -139,20 +139,21 @@ func (m *mongoScheduledCloses) CancelByEntryConfirmation(ctx context.Context, en
 	}}})
 }
 
-func (m *mongoScheduledCloses) CancelStaleAwaiting(ctx context.Context, createdBefore, now time.Time) (int, error) {
-	res, err := m.coll.UpdateMany(ctx, bson.D{
-		{Key: "status", Value: api.ScheduledCloseStatusAwaitingEntry},
-		{Key: "created_at", Value: bson.D{{Key: "$lt", Value: createdBefore}}},
-	}, bson.D{{Key: "$set", Value: bson.D{
-		{Key: "status", Value: api.ScheduledCloseStatusCancelled},
-		{Key: "reason", Value: "entry never confirmed"},
-		{Key: "updated_at", Value: now},
-		{Key: "purge_at", Value: terminalScheduledClosePurgeAt(now)},
-	}}})
-	if err != nil {
-		return 0, err
+func (m *mongoScheduledCloses) ListAwaitingEntry(ctx context.Context, limit int) ([]api.ScheduledClose, error) {
+	if limit <= 0 {
+		limit = 100
 	}
-	return int(res.ModifiedCount), nil
+	cursor, err := m.coll.Find(ctx, bson.D{{Key: "status", Value: api.ScheduledCloseStatusAwaitingEntry}},
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}).SetLimit(int64(limit)))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var rows []api.ScheduledClose
+	if err := cursor.All(ctx, &rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func terminalScheduledClosePurgeAt(now time.Time) time.Time {
