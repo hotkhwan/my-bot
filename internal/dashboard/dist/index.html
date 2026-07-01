@@ -144,6 +144,13 @@
       button.mini { width: auto; padding: 0.25rem 0.55rem; font-size: 0.74rem; }
       /* toast — shows an info badge's detail, webview-safe */
       .toast { position: fixed; left: 50%; bottom: 5.5rem; transform: translateX(-50%); z-index: 80; max-width: 22rem; width: calc(100% - 2rem); background: #0b1220; border: 1px solid var(--card-border); border-radius: 0.7rem; padding: 0.7rem 0.85rem; font-size: 0.82rem; line-height: 1.45; color: var(--text); box-shadow: 0 12px 36px -10px rgba(0,0,0,0.8); text-align: center; }
+      /* in-app confirm modal — replaces the native browser confirm() */
+      .modal-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 1.25rem; background: rgba(3, 5, 12, 0.72); backdrop-filter: blur(3px); }
+      .modal-box { width: 100%; max-width: 24rem; background: #0b1220; border: 1px solid var(--card-border); border-radius: 1rem; padding: 1.15rem 1.2rem 1rem; box-shadow: 0 24px 64px -16px rgba(0,0,0,0.85); }
+      .modal-title { font-weight: 700; font-size: 0.95rem; margin: 0 0 0.5rem; color: var(--text); }
+      .modal-msg { font-size: 0.85rem; line-height: 1.5; color: var(--muted); margin: 0 0 1rem; max-height: 46vh; overflow-y: auto; }
+      .modal-actions { display: flex; gap: 0.6rem; }
+      .modal-actions button { flex: 1; }
       /* type-or-pick combobox (replaces flaky datalist) */
       .combo { position: relative; }
       .combo input { width: 100%; padding-right: 2.2rem; }
@@ -692,6 +699,16 @@
     </div>
 
     <div id="toast" class="toast hidden"></div>
+    <div id="confirm-modal" class="modal-overlay hidden">
+      <div class="modal-box">
+        <p id="confirm-modal-title" class="modal-title">Confirm</p>
+        <p id="confirm-modal-msg" class="modal-msg"></p>
+        <div class="modal-actions">
+          <button class="ghost" id="confirm-modal-cancel" type="button">Cancel</button>
+          <button class="primary" id="confirm-modal-ok" type="button">OK</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Mission Replay overlay -->
     <div id="replay" class="overlay hidden">
@@ -729,6 +746,28 @@
         const t = $("toast"); if (!t) return;
         t.textContent = msg; t.classList.remove("hidden");
         clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add("hidden"), 4200);
+      }
+      // showConfirm: themed in-app replacement for the native confirm() dialog.
+      // Returns a Promise<boolean>. Webview-safe; no browser chrome.
+      function showConfirm(msg, opts) {
+        opts = opts || {};
+        return new Promise((resolve) => {
+          $("confirm-modal-title").textContent = opts.title || "Confirm";
+          $("confirm-modal-msg").textContent = msg;
+          $("confirm-modal-ok").textContent = opts.okLabel || "OK";
+          $("confirm-modal-cancel").textContent = opts.cancelLabel || "Cancel";
+          $("confirm-modal").classList.remove("hidden");
+          const finish = (v) => {
+            $("confirm-modal").classList.add("hidden");
+            $("confirm-modal-ok").onclick = null;
+            $("confirm-modal-cancel").onclick = null;
+            $("confirm-modal").onclick = null;
+            resolve(v);
+          };
+          $("confirm-modal-ok").onclick = () => finish(true);
+          $("confirm-modal-cancel").onclick = () => finish(false);
+          $("confirm-modal").onclick = (e) => { if (e.target === $("confirm-modal")) finish(false); };
+        });
       }
       // Any ⓘ badge shows its data-info on tap; tapping elsewhere closes menus.
       document.addEventListener("click", (e) => {
@@ -1630,7 +1669,7 @@
         }
         const body = Object.assign({}, lastGoalRequest);
         if ($("g-multitrade") && $("g-multitrade").checked) {
-          if (!confirm("Start a multi-trade testnet Mission? One confirmation pre-authorizes a bounded, capped SERIES of automatic testnet entries. ANNY opens and closes trades until whichever comes first: your profit target, two consecutive losses, the 15-trade cap, or the plan window ends. Entries may lose. Testnet only. Disarm any time. Trading involves substantial risk. Not financial advice.")) return;
+          if (!(await showConfirm("One confirmation pre-authorizes a bounded, capped SERIES of automatic testnet entries. ANNY opens and closes trades until whichever comes first: your profit target, two consecutive losses, the 15-trade cap, or the plan window ends. Entries may lose. Testnet only. Disarm any time. Trading involves substantial risk. Not financial advice.", { title: "Start multi-trade Mission?", okLabel: "Start mission" }))) return;
           goalMsg("Starting multi-trade mission…", true);
           $("g-live").disabled = true;
           try {
@@ -1647,7 +1686,7 @@
           finally { $("g-live").disabled = false; }
           return;
         }
-        if (!confirm("Run a LIVE testnet Mission? If no setup is live, ANNY can arm the plan and auto-place one capped testnet entry inside this window. No setup is guaranteed.")) return;
+        if (!(await showConfirm("If no setup is live, ANNY can arm the plan and auto-place one capped testnet entry inside this window. No setup is guaranteed. Testnet only. Not financial advice.", { title: "Run a testnet Mission?", okLabel: "Run mission" }))) return;
         goalMsg("Preparing live Mission…", true);
         $("g-live").disabled = true;
         try {
@@ -1713,8 +1752,10 @@
         const left = exp - Date.now();
         const pnl = fmtPnl(m.realized_pnl_usdt);
         const trades = m.trades_closed || 0;
-        if (m.status === "running" && left > 0)
-          return `🤖 Mission · ${m.symbol || ""} · ${trades}t · ${pnl} USDT · target ${m.target_profit_usdt} · ends in ${fmtCountdown(left)}`;
+        if (m.status === "running" && left > 0) {
+          const head = trades > 0 ? `${trades}t · ${pnl} USDT` : "waiting for a setup";
+          return `🤖 Mission · ${m.symbol || ""} · ${head} · target ${m.target_profit_usdt} · ends in ${fmtCountdown(left)}`;
+        }
         const label = { reached: "🎯 Target reached", stopped: "⏹ Stopped", expired: "⌛ Window ended", disarmed: "Disarmed" }[m.status] || m.status;
         return `${label} · ${m.symbol || ""} · ${trades}t · ${pnl} USDT`;
       }
