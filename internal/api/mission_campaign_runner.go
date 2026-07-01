@@ -8,6 +8,7 @@ import (
 	"bottrade/internal/campaign"
 	"bottrade/internal/decimal"
 	"bottrade/internal/signals"
+	"bottrade/internal/strategy/annybasic"
 )
 
 // recordingTrader wraps the campaign trader so each closed trade's realized PnL is
@@ -16,6 +17,9 @@ import (
 type recordingTrader struct {
 	inner   campaign.Trader
 	advisor *missionCampaignAdvisor
+	// onRecord persists the advisor's accumulated State after each closed trade so
+	// a restart resumes counting from it. Optional (nil in unit tests).
+	onRecord func(state annybasic.State, seq int64)
 }
 
 func (t *recordingTrader) Trade(ctx context.Context, decision signals.Decision) (decimal.Decimal, error) {
@@ -25,6 +29,9 @@ func (t *recordingTrader) Trade(ctx context.Context, decision signals.Decision) 
 	}
 	if decision.Action == signals.ActionOpen {
 		t.advisor.Record(pnl)
+		if t.onRecord != nil {
+			t.onRecord(t.advisor.State(), int64(t.advisor.State().TradesClosed))
+		}
 	}
 	return pnl, nil
 }

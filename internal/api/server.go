@@ -72,6 +72,8 @@ type Server struct {
 	goalRuns         GoalRunStore
 	access           AccessStore
 	armedMissions    ArmedMissionStore
+	campaignMissions CampaignMissionStore
+	campaignRunners  sync.Map // campaign mission id -> context.CancelFunc; running multi-trade missions
 	scheduledCloses  ScheduledCloseStore
 	aiSecrets        AISecretStore
 	favourites       FavouritesStore
@@ -153,6 +155,13 @@ func WithArmedMissionStore(store ArmedMissionStore) Option {
 	return func(s *Server) { s.armedMissions = store }
 }
 
+// WithCampaignMissionStore persists durable multi-trade missions so a running
+// campaign survives an API restart. When unset, NewServer installs an in-memory
+// store for local/tests.
+func WithCampaignMissionStore(store CampaignMissionStore) Option {
+	return func(s *Server) { s.campaignMissions = store }
+}
+
 // WithScheduledCloseStore persists plan-end close jobs so Mission timed closes
 // survive API restarts. When unset, NewServer installs an in-memory store.
 func WithScheduledCloseStore(store ScheduledCloseStore) Option {
@@ -197,6 +206,9 @@ func NewServer(cfg config.Config, processor *signals.Processor, logger *slog.Log
 	}
 	if server.armedMissions == nil {
 		server.armedMissions = newMemArmedMissions()
+	}
+	if server.campaignMissions == nil {
+		server.campaignMissions = newMemCampaignMissions()
 	}
 	if server.scheduledCloses == nil {
 		server.scheduledCloses = newMemScheduledCloses()
