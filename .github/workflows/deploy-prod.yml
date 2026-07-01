@@ -7,8 +7,9 @@ name: Deploy to Fly.io (production)
 # Safety:
 #   - joinanny is still TESTNET-flagged (real trading OFF) in fly.prod.toml until a
 #     deliberate go-live that has passed the Legal Gate + opBNB milestone.
-#   - Protect the `prod` GitHub environment (Settings -> Environments -> prod) with
-#     required reviewers so a push to main cannot ship without human approval.
+#   - Protect the `production` GitHub environment (Settings -> Environments ->
+#     production) with required reviewers so a push to main cannot ship without
+#     human approval.
 #   - Tests must pass before the deploy job runs.
 on:
   push:
@@ -38,7 +39,7 @@ jobs:
     name: Deploy main -> joinanny prod
     needs: test
     runs-on: ubuntu-latest
-    environment: prod
+    environment: production
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
